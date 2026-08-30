@@ -9,6 +9,7 @@ const http = require('http');
 
 const DAEMON = path.join(__dirname, '..', 'daemon', 'daemon.js');
 const INFO_FILE = path.join(os.homedir(), '.aioc', 'daemon.json');
+app.setPath('userData', path.join(os.homedir(), '.aioc', 'electron'));
 
 function readInfo() {
   try { return JSON.parse(fs.readFileSync(INFO_FILE, 'utf8')); } catch { return null; }
