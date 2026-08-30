@@ -1,7 +1,8 @@
-// Aioc UI client: sidebar + one xterm.js terminal per session, connected to the daemon via WS.
+// Aioc UI client: sidebar + xterm.js terminals, one or two panes (Split), connected via WS.
 /* global Terminal, FitAddon, WebglAddon, SearchAddon, WebLinksAddon, Unicode11Addon */
 (() => {
-  const token = new URLSearchParams(location.search).get('token') || '';
+  const params = new URLSearchParams(location.search);
+  const token = params.get('token') || '';
   const $ = id => document.getElementById(id);
 
   const THEME = {
@@ -18,11 +19,27 @@
     running: s => s.status === 'running' || s.status === 'starting',
     done: s => s.status === 'done',
   };
+  const STATUS_ORDER = { waiting: 0, running: 1, starting: 1, done: 2, idle: 3, exited: 4 };
 
   let ws = null, wsOk = false;
   let sessions = [], feed = [], recents = [];
-  let activeId = null, filter = 'all', pendingSelectNew = false;
+  let filter = 'all', pendingSelectNew = false;
+  let panes = [{ id: null }], focused = 0;
   const terms = new Map(); // id -> {term, fit, search, wrap, attached}
+
+  let sortMode = 'ordner', collapsed = new Set();
+  try { sortMode = localStorage.getItem('aioc-sort') || 'ordner'; } catch {}
+  try { collapsed = new Set(JSON.parse(localStorage.getItem('aioc-collapsed') || '[]')); } catch {}
+  const persistLocal = () => {
+    try {
+      localStorage.setItem('aioc-sort', sortMode);
+      localStorage.setItem('aioc-collapsed', JSON.stringify([...collapsed]));
+    } catch {}
+  };
+  if (params.get('split') === '1') { panes.push({ id: null }); }
+
+  const activeId = () => panes[focused]?.id || null;
+  const sessionOf = id => sessions.find(s => s.id === id);
 
   // ---------- WebSocket ----------
   function connect() {
@@ -39,12 +56,13 @@
         sessions = m.sessions; feed = m.feed || []; recents = m.recents || recents;
         if (pendingSelectNew && sessions.length) {
           const newest = [...sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
-          pendingSelectNew = false; activeId = newest.id;
+          pendingSelectNew = false;
+          panes[focused].id = newest.id;
         }
-        if (activeId && !sessions.some(s => s.id === activeId)) activeId = null;
-        if (!activeId && sessions.length) activeId = sessions[0].id;
+        for (const p of panes) if (p.id && !sessionOf(p.id)) p.id = null;
+        if (!activeId() && sessions.length && panes.length === 1) panes[0].id = sessions[0].id;
         renderAll();
-        if (activeId) ensureAttached(activeId);
+        for (const p of panes) if (p.id) ensureAttached(p.id);
       } else if (m.t === 'snapshot') {
         const t = terms.get(m.id);
         if (t) { t.term.reset(); if (m.data) t.term.write(m.data); }
@@ -53,7 +71,8 @@
         if (t) t.term.write(m.d);
       } else if (m.t === 'gone') {
         dropTerm(m.id);
-        if (activeId === m.id) activeId = null;
+        for (const p of panes) if (p.id === m.id) p.id = null;
+        renderAll();
       }
     };
   }
@@ -65,7 +84,6 @@
     if (t) return t;
     const wrap = document.createElement('div');
     wrap.className = 'termwrap';
-    $('termhost').appendChild(wrap);
     const term = new Terminal({
       allowProposedApi: true, fontSize: 14, scrollback: 8000, theme: THEME,
       fontFamily: '"MesloLGM Nerd Font", "MesloLGM NF", "Cascadia Mono", Consolas, monospace',
@@ -90,11 +108,12 @@
         navigator.clipboard?.readText().then(txt => { if (txt) send({ t: 'input', id, d: txt }); }).catch(() => {});
         return false;
       }
-      if (ev.ctrlKey && ev.shiftKey && (ev.key === 'C')) {
+      if (ev.ctrlKey && ev.shiftKey && ev.key === 'C') {
         if (term.hasSelection()) navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
         return false;
       }
-      if (ev.ctrlKey && ev.shiftKey && (ev.key === 'F' || ev.key === 'N')) return false; // app shortcuts
+      if (ev.ctrlKey && ev.shiftKey && (ev.key === 'F' || ev.key === 'N')) return false;
+      if (ev.altKey && ev.shiftKey && (ev.key === 'D' || ev.key === 'd')) return false;
       if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
       return true;
     });
@@ -117,24 +136,40 @@
     return t;
   }
 
-  function fitActive() {
-    if (!activeId) return;
-    const t = terms.get(activeId);
+  function fitPane(i) {
+    const id = panes[i]?.id;
+    if (!id) return;
+    const t = terms.get(id);
     if (!t || !t.wrap.classList.contains('active')) return;
     try {
       t.fit.fit();
-      send({ t: 'resize', id: activeId, cols: t.term.cols, rows: t.term.rows });
+      send({ t: 'resize', id, cols: t.term.cols, rows: t.term.rows });
     } catch {}
   }
+  const fitAll = () => requestAnimationFrame(() => panes.forEach((_, i) => fitPane(i)));
 
-  function select(id) {
-    activeId = id;
-    const t = ensureAttached(id);
-    for (const [tid, tt] of terms) tt.wrap.classList.toggle('active', tid === id);
+  function assignToPane(paneIdx, id) {
+    for (let i = 0; i < panes.length; i++) if (i !== paneIdx && panes[i].id === id) panes[i].id = null;
+    panes[paneIdx].id = id;
+    focused = paneIdx;
+    ensureAttached(id);
     renderAll();
-    requestAnimationFrame(() => { fitActive(); t.term.focus(); });
-    const s = sessions.find(x => x.id === id);
+    fitAll();
+    requestAnimationFrame(() => terms.get(id)?.term.focus());
+    const s = sessionOf(id);
     if (s && s.unread) send({ t: 'markRead', id });
+  }
+
+  function toggleSplit() {
+    if (panes.length === 1) {
+      panes.push({ id: null });
+      focused = 1;
+    } else {
+      panes.pop();
+      focused = 0;
+    }
+    renderAll();
+    fitAll();
   }
 
   // ---------- Rendering ----------
@@ -144,10 +179,17 @@
     c.classList.toggle('off', !wsOk);
   }
 
-  function visibleSessions() { return sessions.filter(FILTERS[filter] || FILTERS.all); }
+  function sortedSessions() {
+    const list = sessions.filter(FILTERS[filter] || FILTERS.all);
+    if (sortMode === 'status') {
+      return [...list].sort((a, b) =>
+        (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) ||
+        a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || a.createdAt - b.createdAt);
+    }
+    return list; // Server liefert bereits nach Ordner + Erstellzeit sortiert
+  }
 
   function renderAll() {
-    // counts
     const c = { waiting: 0, running: 0, done: 0 };
     for (const s of sessions) {
       if (s.status === 'waiting') c.waiting++;
@@ -158,40 +200,60 @@
       `<span><b>${c.waiting}</b> wartet</span><span><b>${c.running}</b> läuft</span><span><b>${c.done}</b> fertig</span>`;
     document.title = c.waiting ? `(${c.waiting}!) Aioc` : 'Aioc';
 
-    // chips
-    document.querySelectorAll('.chip').forEach(ch => ch.setAttribute('aria-pressed', ch.dataset.f === filter ? 'true' : 'false'));
+    document.querySelectorAll('.chip[data-f]').forEach(ch => ch.setAttribute('aria-pressed', ch.dataset.f === filter ? 'true' : 'false'));
+    $('sortbtn').textContent = sortMode === 'status' ? '⇅ Status' : '⇅ Ordner';
 
-    // restore all
-    const restorable = sessions.filter(s => !s.running);
-    $('restoreall-wrap').hidden = restorable.length < 2;
+    $('restoreall-wrap').hidden = sessions.filter(s => !s.running).length < 2;
 
-    // list
+    // Sidebar-Liste
     const list = $('list');
     list.innerHTML = '';
+    const vis = sortedSessions();
+    const byGroup = sortMode === 'ordner';
     let grp = null;
-    visibleSessions().forEach((s, i) => {
-      if (s.cwd !== grp) {
+    let shortcut = 0;
+    vis.forEach(s => {
+      if (byGroup && s.cwd !== grp) {
         grp = s.cwd;
-        const g = document.createElement('div');
-        g.className = 'grp'; g.textContent = grp; g.title = grp;
+        const inGrp = vis.filter(x => x.cwd === grp);
+        const g = document.createElement('button');
+        g.className = 'grp';
+        g.title = grp;
+        const isCol = collapsed.has(grp);
+        const badge = isCol
+          ? inGrp.map(x => (x.status === 'waiting' ? '?' : x.unread ? '●' : '')).join('')
+          : '';
+        g.innerHTML = `<span class="arr">${isCol ? '▸' : '▾'}</span>`;
+        g.append(grp);
+        if (badge) {
+          const b = document.createElement('span');
+          b.className = 'badge'; b.textContent = badge;
+          g.appendChild(b);
+        }
+        g.addEventListener('click', () => {
+          collapsed.has(grp === g.title ? grp : g.title) ? collapsed.delete(g.title) : collapsed.add(g.title);
+          persistLocal(); renderAll();
+        });
         list.appendChild(g);
       }
+      if (byGroup && collapsed.has(s.cwd)) return;
+      shortcut++;
       const b = document.createElement('button');
       b.className = `sess ${s.status}${s.unread ? ' unread' : ''}`;
-      b.setAttribute('aria-current', s.id === activeId ? 'true' : 'false');
-      if (i < 9) b.title = `Ctrl+${i + 1}`;
+      b.setAttribute('aria-current', panes.some(p => p.id === s.id) ? 'true' : 'false');
+      if (shortcut <= 9) b.title = `Ctrl+${shortcut}`;
+      b.dataset.n = shortcut;
       b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="st"></span>`;
       b.querySelector('.ic').textContent = ICON[s.status] || '·';
       b.querySelector('.nm').textContent = s.name;
       b.querySelector('.ag').textContent = s.agent;
       b.querySelector('.st').textContent = s.detail || '';
-      b.addEventListener('click', () => select(s.id));
+      b.addEventListener('click', () => assignToPane(focused, s.id));
       list.appendChild(b);
     });
 
-    // events feed
-    const ev = $('events');
-    ev.innerHTML = '<div class="h">Zuletzt</div>' + feed.map(f => {
+    // Ereignisliste
+    $('events').innerHTML = '<div class="h">Zuletzt</div>' + feed.map(f => {
       const d = new Date(f.t);
       const hh = String(d.getHours()).padStart(2, '0'), mm = String(d.getMinutes()).padStart(2, '0');
       const el = document.createElement('div');
@@ -200,27 +262,61 @@
       return el.outerHTML;
     }).join('');
 
-    // header + terminal visibility
-    const s = sessions.find(x => x.id === activeId);
-    $('phead').hidden = !s;
-    $('empty').style.display = s ? 'none' : 'flex';
-    for (const [tid, tt] of terms) tt.wrap.classList.toggle('active', s && tid === s.id);
-    if (s) {
-      $('p-nm').textContent = s.name;
-      $('p-ag').textContent = s.agent;
-      $('p-cwd').textContent = s.cwd;
-      $('p-sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
-      $('b-close').hidden = !s.running;
-      $('b-restore').hidden = !!s.running;
-      $('b-restore').textContent = s.agent === 'pwsh' ? 'Neu starten' : (s.agentSessionId ? 'Wiederherstellen' : 'Neu starten');
-      $('b-dispose').hidden = !!s.running;
-    }
-
-    // recents datalist
+    renderPanes();
+    renderHead();
     $('recents').innerHTML = recents.map(r => `<option value="${r.replaceAll('"', '&quot;')}">`).join('');
   }
 
-  // ---------- New-session dialog ----------
+  function renderPanes() {
+    const host = $('panes');
+    host.classList.toggle('split', panes.length > 1);
+    // Pane-Elemente angleichen
+    while (host.children.length < panes.length) {
+      const el = document.createElement('div');
+      el.className = 'pane';
+      el.addEventListener('mousedown', () => {
+        const idx = [...host.children].indexOf(el);
+        if (idx >= 0 && idx !== focused) { focused = idx; renderAll(); }
+      }, true);
+      host.appendChild(el);
+    }
+    while (host.children.length > panes.length) host.lastChild.remove();
+
+    panes.forEach((p, i) => {
+      const el = host.children[i];
+      el.classList.toggle('focused', i === focused);
+      let empty = el.querySelector('.pane-empty');
+      if (!empty) {
+        empty = document.createElement('div');
+        empty.className = 'pane-empty';
+        empty.innerHTML = '<div><h2>Keine Session</h2><p>Links eine Session wählen oder mit <b>+ Neu</b> starten.</p></div>';
+        el.appendChild(empty);
+      }
+      empty.style.display = p.id ? 'none' : 'flex';
+      if (p.id) {
+        const t = ensureAttached(p.id);
+        if (t.wrap.parentElement !== el) el.appendChild(t.wrap);
+      }
+    });
+    // Sichtbarkeit: nur wraps aktiver Pane-Zuordnungen
+    for (const [id, t] of terms) t.wrap.classList.toggle('active', panes.some(p => p.id === id));
+  }
+
+  function renderHead() {
+    const s = sessionOf(activeId());
+    $('phead').hidden = !s;
+    if (!s) return;
+    $('p-nm').textContent = s.name;
+    $('p-ag').textContent = s.agent;
+    $('p-cwd').textContent = s.cwd;
+    $('p-sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
+    $('b-close').hidden = !s.running;
+    $('b-restore').hidden = !!s.running;
+    $('b-restore').textContent = s.agent === 'pwsh' ? 'Neu starten' : (s.agentSessionId ? 'Wiederherstellen' : 'Neu starten');
+    $('b-dispose').hidden = !!s.running;
+  }
+
+  // ---------- Neue Session ----------
   let dlgAgent = 'claude';
   function openNew() {
     $('f-cwd').value = recents[0] || '';
@@ -244,57 +340,60 @@
   $('f-cancel').addEventListener('click', () => $('newdlg').close());
   $('newbtn').addEventListener('click', openNew);
 
-  // ---------- Header actions ----------
+  // ---------- Kopfzeilen-Aktionen ----------
   $('b-rename').addEventListener('click', renamePrompt);
   $('p-nm').addEventListener('dblclick', renamePrompt);
   function renamePrompt() {
-    const s = sessions.find(x => x.id === activeId);
+    const s = sessionOf(activeId());
     if (!s) return;
     const name = prompt('Neuer Name:', s.name);
     if (name) send({ t: 'rename', id: s.id, name });
   }
   $('b-close').addEventListener('click', () => {
-    const s = sessions.find(x => x.id === activeId);
+    const s = sessionOf(activeId());
     if (s && confirm(`„${s.name}" läuft noch – Prozess wirklich beenden?`)) send({ t: 'close', id: s.id });
   });
   $('b-dispose').addEventListener('click', () => {
-    const s = sessions.find(x => x.id === activeId);
+    const s = sessionOf(activeId());
     if (s && confirm(`„${s.name}" samt Scrollback aus der Liste entfernen?`)) send({ t: 'dispose', id: s.id });
   });
-  $('b-restore').addEventListener('click', () => { if (activeId) send({ t: 'restore', id: activeId }); });
+  $('b-restore').addEventListener('click', () => { if (activeId()) send({ t: 'restore', id: activeId() }); });
   $('restoreall').addEventListener('click', () => send({ t: 'restoreAll' }));
 
-  // ---------- Filter chips ----------
-  document.querySelectorAll('.chip').forEach(ch =>
+  // ---------- Filter + Sortierung ----------
+  document.querySelectorAll('.chip[data-f]').forEach(ch =>
     ch.addEventListener('click', () => { filter = ch.dataset.f; renderAll(); }));
+  $('sortbtn').addEventListener('click', () => {
+    sortMode = sortMode === 'ordner' ? 'status' : 'ordner';
+    persistLocal(); renderAll();
+  });
 
-  // ---------- Search ----------
+  // ---------- Suche ----------
   function toggleSearch(show) {
     const bar = $('searchbar');
     bar.hidden = show === undefined ? !bar.hidden : !show;
     if (!bar.hidden) $('searchinput').focus();
-    else if (activeId) terms.get(activeId)?.term.focus();
+    else if (activeId()) terms.get(activeId())?.term.focus();
   }
   $('searchinput').addEventListener('keydown', e => {
-    const t = activeId && terms.get(activeId);
+    const t = activeId() && terms.get(activeId());
     if (!t) return;
     if (e.key === 'Enter') { e.shiftKey ? t.search.findPrevious($('searchinput').value) : t.search.findNext($('searchinput').value); e.preventDefault(); }
     if (e.key === 'Escape') toggleSearch(false);
   });
 
-  // ---------- Global keys ----------
+  // ---------- Globale Tasten ----------
   window.addEventListener('keydown', e => {
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); openNew(); return; }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); toggleSearch(); return; }
+    if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleSplit(); return; }
     if (e.ctrlKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
-      const vis = visibleSessions();
-      const s = vis[Number(e.key) - 1];
-      if (s) { e.preventDefault(); select(s.id); }
+      const b = document.querySelector(`.sess[data-n="${e.key}"]`);
+      if (b) { e.preventDefault(); b.click(); }
     }
   }, true);
 
-  // ---------- Resize ----------
-  new ResizeObserver(() => fitActive()).observe($('termhost'));
+  new ResizeObserver(() => fitAll()).observe($('panes'));
 
   connect();
 })();

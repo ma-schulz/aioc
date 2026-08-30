@@ -20,6 +20,7 @@
       <button class="chip" data-f="waiting">Wartet</button>
       <button class="chip" data-f="running">Läuft</button>
       <button class="chip" data-f="done">Fertig</button>
+      <button class="chip sortbtn" id="sortbtn" title="Sortierung umschalten">⇅ Ordner</button>
       <button class="newbtn" id="newbtn" title="Ctrl+Shift+N">+ Neu</button>
     </div>
     <div id="restoreall-wrap" hidden><button class="restoreall" id="restoreall">Alle wiederherstellen</button></div>
@@ -41,16 +42,11 @@
     <div class="searchbar" id="searchbar" hidden>
       <input id="searchinput" placeholder="Suchen… (Enter weiter, Shift+Enter zurück, Esc schließen)">
     </div>
-    <div class="termhost" id="termhost"></div>
-    <div class="empty" id="empty">
-      <div>
-        <h2>Keine Session ausgewählt</h2>
-        <p>Mit <b>+ Neu</b> (oder <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>) startest du Claude, Codex, Pi oder eine PowerShell.</p>
-      </div>
-    </div>
+    <div class="panes" id="panes"></div>
     <div class="statusbar">
       <span><kbd>Ctrl</kbd>+<kbd>1…9</kbd> Session</span>
       <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> Neu</span>
+      <span><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> Teilen</span>
       <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> Suchen</span>
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> Kopieren (bei Auswahl) / Einfügen</span>
     </div>

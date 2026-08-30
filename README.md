@@ -31,10 +31,22 @@ Browser statt Electron: `http://127.0.0.1:43117/?token=<token>` — Token steht 
   Agenten-Konversation per Klick über `claude --resume` / `codex resume` / `pi --session`
   (IDs stammen aus den Hook-Payloads).
 
+## Bedienung
+
+- **Geteilte Ansicht:** Alt+Shift+D teilt den Terminalbereich in zwei Panes (nochmal = zurück).
+  Klick in ein Pane fokussiert es; die Sidebar lädt Sessions immer ins fokussierte Pane.
+- **Gruppen** (je Ordner) lassen sich per Klick auf die Überschrift zuklappen; zugeklappte
+  Gruppen zeigen `?` (wartet) und `●` (ungelesen fertig) als Kurzhinweis.
+- **⇅-Schalter** sortiert wahlweise nach Ordner (Gruppen) oder nach Status (Wartet zuerst, flach).
+- **Autostart:** `install-autostart.cmd` richtet den Daemon als geplante Aufgabe bei der
+  Anmeldung ein (unsichtbar); `remove-autostart.cmd` entfernt sie.
+
 ## Hinweise
 
-- Codex fragt beim ersten Start einer Aioc-Session einmalig, ob es den Aioc-Hook ausführen darf
-  (Hook-Trust) — einmal bestätigen, wird persistiert.
+- Codex-Sessions laufen mit `--dangerously-bypass-hook-trust`: Codex' Hook-Trust-Dialog ist
+  one-shot — einmal weggeklickt, laufen Hooks still nie wieder. Die einzigen so freigeschalteten
+  Hooks sind Aiocs eigene `-c`-Injektionen (plus, falls vorhanden, eigene Einträge in
+  `~/.codex/hooks.json` — dort ist aktuell nichts konfiguriert).
 - Der Daemon lauscht nur auf `127.0.0.1`. Für LAN-Zugriff (`host` in
   `%USERPROFILE%\.aioc\daemon.json`) gilt: Token bleibt Pflicht, von außerhalb nur per VPN —
   Terminal-Zugang ist Vollzugriff auf den PC.
