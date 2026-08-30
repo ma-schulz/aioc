@@ -78,6 +78,9 @@ function buildSpawn(entry, port, { resume = false } = {}) {
     case 'codex': {
       const args = ['/c', 'codex'];
       if (resume && entry.agentSessionId) args.push('resume', entry.agentSessionId);
+      // Codex' Hook-Trust-Dialog ist one-shot: einmal weggeklickt, laufen Hooks still nie.
+      // Die Aioc-Hooks sind unsere eigenen -c-Injektionen, daher Trust hier bewusst umgehen.
+      args.push('--dangerously-bypass-hook-trust');
       return { file: 'cmd.exe', args: [...args, ...codexHookArgs(), ...extra], env };
     }
     case 'pi': {

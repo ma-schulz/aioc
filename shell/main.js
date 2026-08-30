@@ -46,9 +46,20 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
+  const BOUNDS_FILE = path.join(os.homedir(), '.aioc', 'window.json');
+  let bounds = null;
+  try { bounds = JSON.parse(fs.readFileSync(BOUNDS_FILE, 'utf8')); } catch {}
   const win = new BrowserWindow({
-    width: 1500, height: 950, minWidth: 900, minHeight: 500,
+    width: bounds?.width || 1500, height: bounds?.height || 950,
+    x: bounds?.x, y: bounds?.y, minWidth: 900, minHeight: 500,
     backgroundColor: '#0C0C0C', autoHideMenuBar: true, title: 'Aioc',
+  });
+  if (bounds?.maximized) win.maximize();
+  win.on('close', () => {
+    try {
+      const b = win.isMaximized() ? { ...(bounds || {}), maximized: true } : { ...win.getBounds(), maximized: false };
+      fs.writeFileSync(BOUNDS_FILE, JSON.stringify(b));
+    } catch {}
   });
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.key === 'F12') { win.webContents.toggleDevTools(); e.preventDefault(); }
