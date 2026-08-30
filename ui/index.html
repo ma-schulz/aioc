@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aioc</title>
+<link rel="stylesheet" href="/vendor/xterm.css">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="titlebar">
+  <span class="brand">AIOC</span>
+  <span class="counts" id="counts"></span>
+  <span class="conn" id="conn"></span>
+</div>
+<div class="frame">
+  <aside class="side">
+    <div class="tools">
+      <button class="chip" data-f="all" aria-pressed="true">Alle</button>
+      <button class="chip" data-f="waiting">Wartet</button>
+      <button class="chip" data-f="running">Läuft</button>
+      <button class="chip" data-f="done">Fertig</button>
+      <button class="newbtn" id="newbtn" title="Ctrl+Shift+N">+ Neu</button>
+    </div>
+    <div id="restoreall-wrap" hidden><button class="restoreall" id="restoreall">Alle wiederherstellen</button></div>
+    <div class="list" id="list"></div>
+    <div class="events" id="events"></div>
+  </aside>
+  <main class="main">
+    <div class="phead" id="phead" hidden>
+      <span class="nm" id="p-nm" title="Doppelklick: umbenennen"></span>
+      <span class="ag" id="p-ag"></span>
+      <span class="cwd" id="p-cwd"></span>
+      <span class="sid" id="p-sid"></span>
+      <span class="sp"></span>
+      <button class="btn" id="b-restore" hidden>Wiederherstellen</button>
+      <button class="btn" id="b-rename">Umbenennen</button>
+      <button class="btn danger" id="b-close" hidden>Schließen</button>
+      <button class="btn danger" id="b-dispose" hidden>Entfernen</button>
+    </div>
+    <div class="searchbar" id="searchbar" hidden>
+      <input id="searchinput" placeholder="Suchen… (Enter weiter, Shift+Enter zurück, Esc schließen)">
+    </div>
+    <div class="termhost" id="termhost"></div>
+    <div class="empty" id="empty">
+      <div>
+        <h2>Keine Session ausgewählt</h2>
+        <p>Mit <b>+ Neu</b> (oder <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd>) startest du Claude, Codex, Pi oder eine PowerShell.</p>
+      </div>
+    </div>
+    <div class="statusbar">
+      <span><kbd>Ctrl</kbd>+<kbd>1…9</kbd> Session</span>
+      <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> Neu</span>
+      <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> Suchen</span>
+      <span><kbd>Ctrl</kbd>+<kbd>C</kbd>/<kbd>V</kbd> Kopieren (bei Auswahl) / Einfügen</span>
+    </div>
+  </main>
+</div>
+
+<dialog id="newdlg">
+  <form method="dialog" id="newform">
+    <div class="h">Neue Session</div>
+    <div class="body">
+      <label>Agent</label>
+      <div class="seg" id="agentseg">
+        <button type="button" data-a="claude" class="on">Claude</button>
+        <button type="button" data-a="codex">Codex</button>
+        <button type="button" data-a="pi">Pi</button>
+        <button type="button" data-a="pwsh">pwsh</button>
+      </div>
+      <label for="f-cwd">Ordner</label>
+      <input id="f-cwd" class="f" list="recents" spellcheck="false" required>
+      <datalist id="recents"></datalist>
+      <label for="f-name">Name</label>
+      <input id="f-name" class="f" placeholder="optional" spellcheck="false">
+      <label for="f-args">Argumente</label>
+      <input id="f-args" class="f" placeholder='z. B. --resume oder --model haiku' spellcheck="false">
+    </div>
+    <div class="foot">
+      <button type="button" class="btn" id="f-cancel">Abbrechen</button>
+      <button type="submit" class="btn primary" id="f-start">Starten</button>
+    </div>
+  </form>
+</dialog>
+
+<script src="/vendor/xterm.js"></script>
+<script src="/vendor/addon-fit.js"></script>
+<script src="/vendor/addon-webgl.js"></script>
+<script src="/vendor/addon-search.js"></script>
+<script src="/vendor/addon-web-links.js"></script>
+<script src="/vendor/addon-unicode11.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
