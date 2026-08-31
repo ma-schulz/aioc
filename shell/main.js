@@ -39,6 +39,14 @@ async function ensureDaemon() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null); // keine Accelerators – alle Tasten gehören dem Terminal
+  // Zwischenablage lesen (Text UND Bilder erkennen) ist für die eigene UI erlaubt
+  const { session } = require('electron');
+  const clipboardPerms = new Set(['clipboard-read', 'clipboard-sanitized-write']);
+  const isOwnUi = url => /^http:\/\/127\.0\.0\.1(:\d+)?\//.test(url || '');
+  session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) =>
+    cb(clipboardPerms.has(permission) && isOwnUi(details?.requestingUrl || wc.getURL())));
+  session.defaultSession.setPermissionCheckHandler((wc, permission, origin) =>
+    clipboardPerms.has(permission) && isOwnUi(origin ? origin + '/' : wc?.getURL()));
   let info;
   try { info = await ensureDaemon(); } catch (err) {
     const { dialog } = require('electron');

@@ -60,7 +60,8 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | `Ctrl+1 … 9` | Switch to the n-th session in the list |
 | `Alt+Shift+D` | Split: one pane → two side by side → 2×2 → back to one |
 | `Ctrl+Shift+F` | Search in the current terminal |
-| `Ctrl+C` / `Ctrl+V` | Copy when text is selected (otherwise sends the interrupt) / paste |
+| `Ctrl+C` / `Ctrl+V` | Copy when text is selected (otherwise sends the interrupt) / paste — text is pasted, an **image** in the clipboard is handed to the agent (Claude Code, Codex) |
+| Right click | Copy the selection, or paste if nothing is selected |
 
 - Click a pane to focus it; the sidebar always loads sessions into the focused pane.
 - Click a folder heading to collapse the group. Collapsed groups show `?` (waiting) and `●` (unread) as a hint.

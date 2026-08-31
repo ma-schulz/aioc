@@ -20,6 +20,9 @@
     done: s => s.status === 'done',
   };
   const STATUS_ORDER = { waiting: 0, running: 1, starting: 1, done: 2, idle: 3, exited: 4 };
+  // Bild in der Zwischenablage: der Agent liest sie selbst, sobald er "seine" Taste bekommt
+  // (verifiziert 31.08.2026: Claude Code = Alt+V, Codex = rohes Ctrl+V).
+  const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', pi: '\x16' };
 
   let ws = null, wsOk = false;
   let sessions = [], feed = [], recents = [];
@@ -105,8 +108,8 @@
         term.clearSelection();
         return false;
       }
-      if (ev.ctrlKey && !ev.shiftKey && ev.key === 'v') {
-        navigator.clipboard?.readText().then(txt => { if (txt) send({ t: 'input', id, d: txt }); }).catch(() => {});
+      if ((ev.ctrlKey && !ev.shiftKey && ev.key === 'v') || (ev.shiftKey && ev.key === 'Insert')) {
+        pasteInto(id);
         return false;
       }
       if (ev.ctrlKey && ev.shiftKey && ev.key === 'C') {
@@ -118,9 +121,39 @@
       if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
       return true;
     });
+    // Rechtsklick wie im Windows Terminal: Auswahl kopieren, sonst einfügen
+    wrap.addEventListener('contextmenu', e => {
+      e.preventDefault();
+      if (term.hasSelection()) {
+        navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+        term.clearSelection();
+      } else pasteInto(id);
+    });
     t = { term, fit, search, wrap, attached: false };
     terms.set(id, t);
     return t;
+  }
+
+  // Einfügen: Text geht als (bracketed) Paste ins Terminal; ein Bild bekommt der Agent über
+  // seine Bild-Taste und liest es selbst aus der System-Zwischenablage.
+  async function pasteInto(id) {
+    const s = sessionOf(id);
+    const t = terms.get(id);
+    if (!t) return;
+    let hasImage = false, text = '';
+    try {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        if (it.types.some(ty => ty.startsWith('image/'))) hasImage = true;
+        if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+      }
+    } catch {
+      try { text = await navigator.clipboard.readText(); } catch {}
+    }
+    const imgKey = s && IMAGE_KEY[s.agent];
+    if (hasImage && imgKey) { send({ t: 'input', id, d: imgKey }); return; }
+    if (text) { t.term.paste(text); return; }
+    if (imgKey) send({ t: 'input', id, d: imgKey }); // kein Text lesbar: vermutlich ein Bild
   }
 
   function dropTerm(id) {
