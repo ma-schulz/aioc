@@ -1,0 +1,11 @@
+{
+  "name": "Aioc",
+  "short_name": "Aioc",
+  "description": "One window for all your AI coding agents",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0C0C0C",
+  "theme_color": "#1C2027",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

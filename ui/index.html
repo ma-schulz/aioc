@@ -3,7 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#1C2027">
 <title>Aioc</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -11,6 +14,8 @@
 <div class="titlebar">
   <span class="brand">AIOC</span>
   <span class="counts" id="counts"></span>
+  <span class="sp"></span>
+  <span class="lan" id="lan"></span>
   <span class="conn" id="conn"></span>
 </div>
 <div class="frame">
@@ -29,17 +34,6 @@
   </aside>
   <div id="resizer" role="separator" aria-orientation="vertical" title="Breite ziehen · Doppelklick: zurücksetzen"></div>
   <main class="main">
-    <div class="phead" id="phead" hidden>
-      <span class="nm" id="p-nm" title="Doppelklick: umbenennen"></span>
-      <span class="ag" id="p-ag"></span>
-      <span class="cwd" id="p-cwd"></span>
-      <span class="sid" id="p-sid"></span>
-      <span class="sp"></span>
-      <button class="btn" id="b-restore" hidden>Wiederherstellen</button>
-      <button class="btn" id="b-rename">Umbenennen</button>
-      <button class="btn danger" id="b-close" hidden>Schließen</button>
-      <button class="btn danger" id="b-dispose" hidden>Entfernen</button>
-    </div>
     <div class="searchbar" id="searchbar" hidden>
       <input id="searchinput" placeholder="Suchen… (Enter weiter, Shift+Enter zurück, Esc schließen)">
     </div>

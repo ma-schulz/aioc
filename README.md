@@ -20,7 +20,8 @@ The status is **not guessed from screen output**. Each agent reports it through 
 - **Daemon and window are separate.** A small background service owns the sessions. Closing the window — or crashing it, or updating Aioc — never kills an agent. Reopen the window and everything is still there, scrollback included.
 - **Survives reboots.** Session list and scrollback are persisted continuously. After a restart every session comes back as *"before restart"* with its full terminal content; one click resumes the agent's own conversation (`claude --resume`, `codex resume`, `pi --session`) using the IDs Aioc learned from the hooks. Only a turn that was mid-flight at shutdown is lost.
 - **Built for many sessions.** Split view (1 → 2 → 2×2), folder groups you can collapse, sort by folder or by status, a resizable sidebar, remembered window position, and Windows-Terminal-style keys.
-- **The UI is a web app.** The daemon serves it; Electron is just the shell around it. A browser on another machine in your LAN works too (see [Security](#security)).
+- **The UI is a web app.** The daemon serves it; Electron is just the shell around it. Switch on **LAN** and the same UI runs on a laptop, a tablet (as a PWA) or a second PC — over HTTPS/WSS with a pinned certificate (see [Use it from another machine](#use-it-from-another-machine-lan)).
+- **Every pane has its own header.** In split view each terminal carries name, agent, folder, session ID and its own actions.
 
 ## What Aioc deliberately does not do
 
@@ -91,12 +92,24 @@ The hooks are a 20-line script that reads the hook JSON from stdin and posts it 
 
 **Note on Codex:** Codex asks once whether it may run newly configured hooks — and that dialog is one-shot. If it is dismissed, the hooks are silently never executed. Because the only hooks involved are Aioc's own command-line injections, Aioc starts Codex with `--dangerously-bypass-hook-trust`. If you keep your own hooks in `~/.codex/hooks.json`, be aware that this flag covers them too.
 
+## Use it from another machine (LAN)
+
+The window is only a client, so it can run somewhere else — a laptop, a tablet, a second PC.
+
+1. On the daemon machine click **LAN an** in the title bar. Aioc generates a self-signed certificate once (`%USERPROFILE%\.aioc\tls\`) and opens a second listener: **HTTPS/WSS on port 43443**, bound to all interfaces. The switch is persistent; `node daemon/lan.js on|off|status` does the same from the command line.
+2. Allow the port in Windows Firewall once (as administrator): `netsh advfirewall firewall add rule name="Aioc LAN" dir=in action=allow protocol=TCP localport=43443`
+3. Click **Link kopieren**. The link carries the access token and the certificate fingerprint, e.g. `https://192.168.1.10:43443/?token=…&fp=…`.
+4. On the other device:
+   - **Browser / tablet:** open the link, accept the self-signed certificate once, and use *Add to Home Screen* — Aioc ships a PWA manifest, so it opens as its own app. The token is remembered in the browser.
+   - **Second PC with this repo:** `aioc-remote.cmd "<link>"` opens an Aioc window that pins the daemon's certificate to the fingerprint from the link — no certificate warning, and any other certificate is rejected.
+
+Pasting an image from a remote window works too: the image travels over the WebSocket to the daemon, is placed in the clipboard of the daemon machine and handed to the agent there — the same path a local `Ctrl+V` takes. **LAN aus** closes the listener and drops remote clients; local use continues untouched.
+
 ## Security
 
-- The daemon listens on `127.0.0.1` only and the WebSocket requires a token (`%USERPROFILE%\.aioc\daemon.json`).
-- A terminal is full access to your machine. If you change `host` in `daemon.json` to serve your LAN, keep the token, and never expose the port beyond that — use a VPN (Tailscale, WireGuard) instead of port forwarding.
-- The hook endpoint accepts loopback connections only.
-- Pasting an image from a remote window works too: the image is sent to the daemon over the (token-protected) WebSocket, placed in the clipboard of the daemon machine, and handed to the agent there — the same path a local `Ctrl+V` takes.
+- Locally the daemon listens on `127.0.0.1` only. The LAN listener is off until you switch it on, uses TLS, and every WebSocket connection needs the token.
+- A terminal is full access to your machine. Keep the link private, and never expose the port beyond your LAN — use a VPN (Tailscale, WireGuard) instead of port forwarding.
+- The hook endpoint (`/event`) accepts loopback connections only, on both listeners.
 
 ## Project layout
 

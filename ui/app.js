@@ -1,8 +1,13 @@
-// Aioc UI client: sidebar + xterm.js terminals, one or two panes (Split), connected via WS.
+// Aioc UI client: sidebar + xterm.js terminals in 1/2/4 panes (each with its own header),
+// connected to the daemon via WebSocket. Works locally (Electron) and from another machine.
 /* global Terminal, FitAddon, WebglAddon, SearchAddon, WebLinksAddon, Unicode11Addon */
 (() => {
   const params = new URLSearchParams(location.search);
-  const token = params.get('token') || '';
+  let token = params.get('token') || '';
+  try {
+    if (token) localStorage.setItem('aioc-token', token);
+    else token = localStorage.getItem('aioc-token') || '';
+  } catch {}
   const $ = id => document.getElementById(id);
 
   const THEME = {
@@ -23,9 +28,13 @@
   // Bild in der Zwischenablage: der Agent liest sie selbst, sobald er "seine" Taste bekommt
   // (verifiziert 31.08.2026: Claude Code = Alt+V, Codex = rohes Ctrl+V).
   const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', pi: '\x16' };
+  // Läuft das Fenster auf dem Daemon-Rechner, reicht die Bild-Taste (gleiche Zwischenablage).
+  // Aus der Ferne wird das Bild zum Daemon übertragen, der es dort in die Zwischenablage legt.
+  const LOCAL_UI = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+  const WS_SCHEME = location.protocol === 'https:' ? 'wss' : 'ws';
 
   let ws = null, wsOk = false;
-  let sessions = [], feed = [], recents = [];
+  let sessions = [], feed = [], recents = [], lan = { enabled: false, links: [] };
   let filter = 'all', pendingSelectNew = false;
   let panes = [{ id: null }], focused = 0;
   const terms = new Map(); // id -> {term, fit, search, wrap, attached}
@@ -47,7 +56,7 @@
 
   // ---------- WebSocket ----------
   function connect() {
-    ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}`);
+    ws = new WebSocket(`${WS_SCHEME}://${location.host}/ws?token=${encodeURIComponent(token)}`);
     ws.onopen = () => { wsOk = true; renderConn(); };
     ws.onclose = () => {
       wsOk = false; renderConn();
@@ -57,7 +66,7 @@
     ws.onmessage = e => {
       const m = JSON.parse(e.data);
       if (m.t === 'hello' || m.t === 'sessions') {
-        sessions = m.sessions; feed = m.feed || []; recents = m.recents || recents;
+        sessions = m.sessions; feed = m.feed || []; recents = m.recents || recents; lan = m.lan || lan;
         if (pendingSelectNew && sessions.length) {
           const newest = [...sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
           pendingSelectNew = false;
@@ -65,6 +74,10 @@
         }
         for (const p of panes) if (p.id && !sessionOf(p.id)) p.id = null;
         if (!activeId() && sessions.length && panes.length === 1) panes[0].id = sessions[0].id;
+        // Geteilt gestartet (?split=…) und noch leer: die ersten Sessions auf die Panes verteilen
+        if (m.t === 'hello' && panes.length > 1 && panes.every(p => !p.id)) {
+          sessions.slice(0, panes.length).forEach((s, i) => { panes[i].id = s.id; });
+        }
         renderAll();
         for (const p of panes) if (p.id) ensureAttached(p.id);
       } else if (m.t === 'snapshot') {
@@ -135,10 +148,7 @@
   }
 
   // Einfügen: Text geht als (bracketed) Paste ins Terminal; ein Bild bekommt der Agent über
-  // seine Bild-Taste und liest es selbst aus der System-Zwischenablage.
-  // Läuft das Fenster auf dem Daemon-Rechner, reicht die Bild-Taste (gleiche Zwischenablage).
-  // Aus der Ferne wird das Bild zum Daemon übertragen, der es dort in die Zwischenablage legt.
-  const LOCAL_UI = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
+  // seine Bild-Taste und liest es selbst aus der System-Zwischenablage des Daemon-Rechners.
   async function pasteInto(id) {
     const s = sessionOf(id);
     const t = terms.get(id);
@@ -208,7 +218,7 @@
     if (s && s.unread) send({ t: 'markRead', id });
   }
 
-  // 1 Pane -> 2 nebeneinander -> 2x2 -> zurueck auf 1 (die fokussierte Session bleibt)
+  // 1 Pane -> 2 nebeneinander -> 2x2 -> zurück auf 1 (die fokussierte Session bleibt)
   function toggleSplit() {
     if (panes.length === 1) {
       panes.push({ id: null });
@@ -229,6 +239,45 @@
     const c = $('conn');
     c.textContent = wsOk ? '' : 'Verbindung getrennt – verbinde neu …';
     c.classList.toggle('off', !wsOk);
+  }
+
+  function renderLan() {
+    const el = $('lan');
+    el.innerHTML = '';
+    if (lan.enabled) {
+      const link = lan.links[0] || '';
+      const lbl = document.createElement('span');
+      lbl.className = 'lan-on';
+      lbl.textContent = 'LAN an';
+      lbl.title = 'Andere Geräte erreichen Aioc über:\n' + lan.links.join('\n') + '\n\nFirewall: node.exe muss auf Port ' + lan.port + ' eingehend erlaubt sein.';
+      el.appendChild(lbl);
+      if (link) {
+        const code = document.createElement('code');
+        code.textContent = link.replace(/\?token=.*$/, '?…');
+        code.title = link;
+        el.appendChild(code);
+        const copy = document.createElement('button');
+        copy.className = 'btn';
+        copy.textContent = 'Link kopieren';
+        copy.title = 'Verbindungslink (mit Token und Zertifikats-Fingerprint) in die Zwischenablage';
+        copy.addEventListener('click', () => {
+          navigator.clipboard?.writeText(link).then(() => { copy.textContent = 'Kopiert ✓'; setTimeout(() => (copy.textContent = 'Link kopieren'), 1500); }).catch(() => {});
+        });
+        el.appendChild(copy);
+      }
+      const off = document.createElement('button');
+      off.className = 'btn';
+      off.textContent = 'LAN aus';
+      off.addEventListener('click', () => send({ t: 'lan', enabled: false }));
+      el.appendChild(off);
+    } else {
+      const on = document.createElement('button');
+      on.className = 'btn dim';
+      on.textContent = 'LAN an';
+      on.title = 'Zugriff aus dem Netzwerk per HTTPS/WSS freigeben (Token + Zertifikats-Fingerprint im Link)';
+      on.addEventListener('click', () => send({ t: 'lan', enabled: true }));
+      el.appendChild(on);
+    }
   }
 
   function sortedSessions() {
@@ -254,7 +303,6 @@
 
     document.querySelectorAll('.chip[data-f]').forEach(ch => ch.setAttribute('aria-pressed', ch.dataset.f === filter ? 'true' : 'false'));
     $('sortbtn').textContent = sortMode === 'status' ? '⇅ Status' : '⇅ Ordner';
-
     $('restoreall-wrap').hidden = sessions.filter(s => !s.running).length < 2;
 
     // Sidebar-Liste
@@ -272,9 +320,7 @@
         g.className = 'grp';
         g.title = grp;
         const isCol = collapsed.has(grp);
-        const badge = isCol
-          ? inGrp.map(x => (x.status === 'waiting' ? '?' : x.unread ? '●' : '')).join('')
-          : '';
+        const badge = isCol ? inGrp.map(x => (x.status === 'waiting' ? '?' : x.unread ? '●' : '')).join('') : '';
         g.innerHTML = `<span class="arr">${isCol ? '▸' : '▾'}</span>`;
         g.append(grp);
         if (badge) {
@@ -283,7 +329,7 @@
           g.appendChild(b);
         }
         g.addEventListener('click', () => {
-          collapsed.has(grp === g.title ? grp : g.title) ? collapsed.delete(g.title) : collapsed.add(g.title);
+          if (collapsed.has(g.title)) collapsed.delete(g.title); else collapsed.add(g.title);
           persistLocal(); renderAll();
         });
         list.appendChild(g);
@@ -301,7 +347,7 @@
       b.querySelector('.ag').textContent = s.agent;
       b.querySelector('.st').textContent = s.detail || '';
       b.addEventListener('click', () => assignToPane(focused, s.id));
-      b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(); });
+      b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(s.id); });
       list.appendChild(b);
     });
 
@@ -316,58 +362,110 @@
     }).join('');
 
     renderPanes();
-    renderHead();
+    renderLan();
     $('recents').innerHTML = recents.map(r => `<option value="${r.replaceAll('"', '&quot;')}">`).join('');
+  }
+
+  // Jedes Pane: eigene Kopfzeile (Name, Agent, Ordner, Session, Aktionen) + Terminalbereich
+  function buildPane(host) {
+    const el = document.createElement('div');
+    el.className = 'pane';
+    el.innerHTML = `
+      <div class="phead">
+        <span class="nm" title="Doppelklick: umbenennen"></span>
+        <span class="ag"></span>
+        <span class="cwd"></span>
+        <span class="sid"></span>
+        <span class="sp"></span>
+        <button class="btn b-restore" hidden>Wiederherstellen</button>
+        <button class="btn b-rename">Umbenennen</button>
+        <button class="btn danger b-close" hidden>Schließen</button>
+        <button class="btn danger b-dispose" hidden>Entfernen</button>
+      </div>
+      <div class="pane-body">
+        <div class="pane-empty"><div><h2>Keine Session</h2><p>Links eine Session wählen oder mit <b>+ Neu</b> starten.</p></div></div>
+      </div>`;
+    const idOf = () => panes[[...host.children].indexOf(el)]?.id;
+    el.addEventListener('mousedown', () => {
+      const idx = [...host.children].indexOf(el);
+      if (idx >= 0 && idx !== focused) { focused = idx; renderAll(); }
+    }, true);
+    el.querySelector('.b-rename').addEventListener('click', () => renamePrompt(idOf()));
+    el.querySelector('.nm').addEventListener('dblclick', () => renamePrompt(idOf()));
+    el.querySelector('.b-close').addEventListener('click', () => {
+      const s = sessionOf(idOf());
+      if (s && confirm(`„${s.name}" läuft noch – Prozess wirklich beenden?`)) send({ t: 'close', id: s.id });
+    });
+    el.querySelector('.b-dispose').addEventListener('click', () => {
+      const s = sessionOf(idOf());
+      if (s && confirm(`„${s.name}" samt Scrollback aus der Liste entfernen?`)) send({ t: 'dispose', id: s.id });
+    });
+    el.querySelector('.b-restore').addEventListener('click', () => { const id = idOf(); if (id) send({ t: 'restore', id }); });
+    return el;
   }
 
   function renderPanes() {
     const host = $('panes');
     host.classList.toggle('split', panes.length > 1);
     host.classList.toggle('split4', panes.length === 4);
-    // Pane-Elemente angleichen
-    while (host.children.length < panes.length) {
-      const el = document.createElement('div');
-      el.className = 'pane';
-      el.addEventListener('mousedown', () => {
-        const idx = [...host.children].indexOf(el);
-        if (idx >= 0 && idx !== focused) { focused = idx; renderAll(); }
-      }, true);
-      host.appendChild(el);
-    }
+    while (host.children.length < panes.length) host.appendChild(buildPane(host));
     while (host.children.length > panes.length) host.lastChild.remove();
 
     panes.forEach((p, i) => {
       const el = host.children[i];
       el.classList.toggle('focused', i === focused);
-      let empty = el.querySelector('.pane-empty');
-      if (!empty) {
-        empty = document.createElement('div');
-        empty.className = 'pane-empty';
-        empty.innerHTML = '<div><h2>Keine Session</h2><p>Links eine Session wählen oder mit <b>+ Neu</b> starten.</p></div>';
-        el.appendChild(empty);
-      }
-      empty.style.display = p.id ? 'none' : 'flex';
-      if (p.id) {
-        const t = ensureAttached(p.id);
-        if (t.wrap.parentElement !== el) el.appendChild(t.wrap);
+      const s = sessionOf(p.id);
+      const head = el.querySelector('.phead');
+      const body = el.querySelector('.pane-body');
+      head.hidden = !s;
+      body.querySelector('.pane-empty').style.display = s ? 'none' : 'flex';
+      if (s) {
+        const nm = head.querySelector('.nm');
+        if (!nm.querySelector('input')) nm.textContent = s.name;
+        head.querySelector('.ag').textContent = s.agent;
+        head.querySelector('.cwd').textContent = s.cwd;
+        head.querySelector('.sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
+        head.querySelector('.b-close').hidden = !s.running;
+        head.querySelector('.b-restore').hidden = !!s.running;
+        head.querySelector('.b-restore').textContent = s.agent === 'pwsh' ? 'Neu starten' : (s.agentSessionId ? 'Wiederherstellen' : 'Neu starten');
+        head.querySelector('.b-dispose').hidden = !!s.running;
+        const t = ensureAttached(s.id);
+        if (t.wrap.parentElement !== body) body.appendChild(t.wrap);
       }
     });
-    // Sichtbarkeit: nur wraps aktiver Pane-Zuordnungen
     for (const [id, t] of terms) t.wrap.classList.toggle('active', panes.some(p => p.id === id));
   }
 
-  function renderHead() {
-    const s = sessionOf(activeId());
-    $('phead').hidden = !s;
+  // Inline-Umbenennen in der Kopfzeile des Panes (window.prompt gibt es in Electron nicht)
+  function renamePrompt(id) {
+    const s = sessionOf(id);
     if (!s) return;
-    if (!$('p-nm').querySelector('input')) $('p-nm').textContent = s.name;
-    $('p-ag').textContent = s.agent;
-    $('p-cwd').textContent = s.cwd;
-    $('p-sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
-    $('b-close').hidden = !s.running;
-    $('b-restore').hidden = !!s.running;
-    $('b-restore').textContent = s.agent === 'pwsh' ? 'Neu starten' : (s.agentSessionId ? 'Wiederherstellen' : 'Neu starten');
-    $('b-dispose').hidden = !!s.running;
+    const idx = panes.findIndex(p => p.id === id);
+    const nm = idx >= 0 && $('panes').children[idx]?.querySelector('.phead .nm');
+    if (!nm || nm.querySelector('input')) return;
+    const input = document.createElement('input');
+    input.className = 'rename';
+    input.value = s.name;
+    input.setAttribute('aria-label', 'Neuer Name');
+    nm.textContent = '';
+    nm.appendChild(input);
+    input.focus();
+    input.select();
+    let finished = false;
+    const finish = commit => {
+      if (finished) return;
+      finished = true;
+      const val = input.value.trim();
+      if (commit && val && val !== s.name) send({ t: 'rename', id: s.id, name: val });
+      nm.textContent = commit && val ? val : s.name;
+      terms.get(s.id)?.term.focus();
+    };
+    input.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
   }
 
   // ---------- Neue Session ----------
@@ -393,49 +491,6 @@
   });
   $('f-cancel').addEventListener('click', () => $('newdlg').close());
   $('newbtn').addEventListener('click', openNew);
-
-  // ---------- Kopfzeilen-Aktionen ----------
-  $('b-rename').addEventListener('click', renamePrompt);
-  $('p-nm').addEventListener('dblclick', renamePrompt);
-  // Inline-Umbenennen in der Kopfzeile (window.prompt gibt es in Electron nicht)
-  function renamePrompt() {
-    const s = sessionOf(activeId());
-    if (!s) return;
-    const nm = $('p-nm');
-    if (nm.querySelector('input')) return;
-    const input = document.createElement('input');
-    input.className = 'rename';
-    input.value = s.name;
-    input.setAttribute('aria-label', 'Neuer Name');
-    nm.textContent = '';
-    nm.appendChild(input);
-    input.focus();
-    input.select();
-    let finished = false;
-    const finish = commit => {
-      if (finished) return;
-      finished = true;
-      const val = input.value.trim();
-      if (commit && val && val !== s.name) send({ t: 'rename', id: s.id, name: val });
-      nm.textContent = commit && val ? val : s.name;
-      terms.get(s.id)?.term.focus();
-    };
-    input.addEventListener('keydown', e => {
-      e.stopPropagation();
-      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
-      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
-    });
-    input.addEventListener('blur', () => finish(true));
-  }
-  $('b-close').addEventListener('click', () => {
-    const s = sessionOf(activeId());
-    if (s && confirm(`„${s.name}" läuft noch – Prozess wirklich beenden?`)) send({ t: 'close', id: s.id });
-  });
-  $('b-dispose').addEventListener('click', () => {
-    const s = sessionOf(activeId());
-    if (s && confirm(`„${s.name}" samt Scrollback aus der Liste entfernen?`)) send({ t: 'dispose', id: s.id });
-  });
-  $('b-restore').addEventListener('click', () => { if (activeId()) send({ t: 'restore', id: activeId() }); });
   $('restoreall').addEventListener('click', () => send({ t: 'restoreAll' }));
 
   // ---------- Filter + Sortierung ----------

@@ -1,16 +1,22 @@
 // Aioc daemon: owns all sessions, serves the web UI, accepts hook reports on /event and
 // speaks the client protocol over WebSocket. The UI (Electron or browser) is just a client —
-// closing it never touches the sessions.
+// closing it never touches the sessions. Optional LAN listener: HTTPS/WSS on a second port.
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer } = require('ws');
 const state = require('./state');
 const { SessionManager } = require('./sessions');
+const tlsUtil = require('./tls');
+const { lanLinks } = require('./lan');
 
 const info = state.loadDaemonInfo();
 const PORT = Number(process.env.AIOC_DAEMON_PORT || info.port);
 const HOST = process.env.AIOC_DAEMON_HOST || info.host;
+info.lanPort = Number(process.env.AIOC_LAN_PORT || info.lanPort || 43443);
+info.lan = !!info.lan;
+const startedAt = Date.now();
 
 const UI_DIR = path.join(__dirname, '..', 'ui');
 const NM = path.join(__dirname, '..', 'node_modules');
@@ -27,9 +33,13 @@ const STATIC = {
   '/': [path.join(UI_DIR, 'index.html'), 'text/html; charset=utf-8'],
   '/app.js': [path.join(UI_DIR, 'app.js'), 'text/javascript'],
   '/style.css': [path.join(UI_DIR, 'style.css'), 'text/css'],
+  '/manifest.webmanifest': [path.join(UI_DIR, 'manifest.webmanifest'), 'application/manifest+json'],
+  '/icon.svg': [path.join(UI_DIR, 'icon.svg'), 'image/svg+xml'],
 };
 
 const wss = new WebSocketServer({ noServer: true });
+let lanServer = null;
+let lanFp = null;
 
 const mgr = new SessionManager(PORT, {
   onData: (id, d) => {
@@ -42,9 +52,21 @@ mgr.adoptSaved();
 
 function send(ws, obj) { if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} } }
 
+function lanState() {
+  return { enabled: !!lanServer, port: info.lanPort, fp: lanFp, links: lanServer ? lanLinks(info, lanFp) : [] };
+}
+
+function stateMsg(t) {
+  return { t, sessions: mgr.toClient(), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState() };
+}
+
 function broadcastSessions() {
-  const msg = { t: 'sessions', sessions: mgr.toClient(), feed: mgr.feed, recents: state.loadUiState().recents || [] };
+  const msg = stateMsg('sessions');
   for (const ws of wss.clients) send(ws, msg);
+}
+
+function persistInfo() {
+  state.saveDaemonInfo({ ...info, port: PORT, host: HOST, pid: process.pid, startedAt });
 }
 
 function isLoopback(req) {
@@ -52,7 +74,7 @@ function isLoopback(req) {
   return a === '127.0.0.1' || a === '::1' || a === '::ffff:127.0.0.1';
 }
 
-const server = http.createServer((req, res) => {
+function handleRequest(req, res) {
   const url = new URL(req.url, 'http://x');
   if (req.method === 'POST' && url.pathname === '/event') {
     if (!isLoopback(req)) { res.writeHead(403); res.end(); return; }
@@ -66,7 +88,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, name: 'aioc', pid: process.pid, sessions: mgr.sessions.size }));
+    res.end(JSON.stringify({ ok: true, name: 'aioc', pid: process.pid, sessions: mgr.sessions.size, lan: !!lanServer }));
     return;
   }
   const entry = STATIC[url.pathname] || VENDOR[url.pathname];
@@ -79,19 +101,23 @@ const server = http.createServer((req, res) => {
     return;
   }
   res.writeHead(404); res.end('not found');
-});
+}
 
-server.on('upgrade', (req, socket, head) => {
+function handleUpgrade(req, socket, head) {
   const url = new URL(req.url, 'http://x');
   if (url.pathname !== '/ws' || url.searchParams.get('token') !== info.token) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return;
   }
-  wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
-});
+  wss.handleUpgrade(req, socket, head, ws => {
+    ws.viaLan = !!req.socket.encrypted;
+    console.log(`[aioc] Client ${req.socket.remoteAddress} ${ws.viaLan ? 'TLS' : 'lokal'} · ${(req.headers['user-agent'] || '').slice(0, 70)}`);
+    wss.emit('connection', ws, req);
+  });
+}
 
 wss.on('connection', ws => {
   ws.attached = new Set();
-  send(ws, { t: 'hello', sessions: mgr.toClient(), feed: mgr.feed, recents: state.loadUiState().recents || [] });
+  send(ws, stateMsg('hello'));
   ws.on('message', raw => {
     let m; try { m = JSON.parse(raw); } catch { return; }
     const s = m.id ? mgr.sessions.get(m.id) : null;
@@ -115,6 +141,10 @@ wss.on('connection', ws => {
         case 'dispose': mgr.dispose(m.id); break;
         case 'rename': mgr.rename(m.id, m.name); break;
         case 'markRead': mgr.markRead(m.id); break;
+        case 'lan':
+          if (m.enabled) startLan().catch(err => { mgr.pushFeed('LAN-Zugriff konnte nicht gestartet werden: ' + err.message); broadcastSessions(); });
+          else stopLan();
+          break;
         default: break;
       }
     } catch (err) {
@@ -123,9 +153,44 @@ wss.on('connection', ws => {
   });
 });
 
+// ---- LAN: zweiter Listener mit HTTPS/WSS auf 0.0.0.0:lanPort ----------------------------------
+async function startLan() {
+  if (lanServer) return;
+  const { key, cert, fp } = await tlsUtil.ensureCert();
+  const server = https.createServer({ key, cert }, handleRequest);
+  server.on('upgrade', handleUpgrade);
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(info.lanPort, '0.0.0.0', resolve);
+  });
+  lanServer = server;
+  lanFp = fp;
+  info.lan = true;
+  persistInfo();
+  mgr.pushFeed(`LAN-Zugriff EIN · HTTPS-Port ${info.lanPort} · Firewall muss node.exe eingehend erlauben`);
+  console.log(`[aioc] LAN-Listener auf https://0.0.0.0:${info.lanPort} (Fingerprint ${fp})`);
+  broadcastSessions();
+}
+
+function stopLan() {
+  if (!lanServer) return;
+  for (const ws of wss.clients) if (ws.viaLan) { try { ws.close(); } catch {} }
+  lanServer.close();
+  lanServer = null;
+  lanFp = null;
+  info.lan = false;
+  persistInfo();
+  mgr.pushFeed('LAN-Zugriff AUS');
+  console.log('[aioc] LAN-Listener gestoppt');
+  broadcastSessions();
+}
+
+const server = http.createServer(handleRequest);
+server.on('upgrade', handleUpgrade);
 server.listen(PORT, HOST, () => {
-  state.saveDaemonInfo({ ...info, port: PORT, host: HOST, pid: process.pid, startedAt: Date.now() });
+  persistInfo();
   console.log(`[aioc] Daemon läuft auf http://${HOST}:${PORT} (PID ${process.pid})`);
+  if (info.lan) startLan().catch(err => console.error('[aioc] LAN-Start fehlgeschlagen:', err.message));
 });
 
 let shuttingDown = false;
