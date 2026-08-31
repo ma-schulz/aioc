@@ -254,6 +254,7 @@
       b.querySelector('.ag').textContent = s.agent;
       b.querySelector('.st').textContent = s.detail || '';
       b.addEventListener('click', () => assignToPane(focused, s.id));
+      b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(); });
       list.appendChild(b);
     });
 
@@ -312,7 +313,7 @@
     const s = sessionOf(activeId());
     $('phead').hidden = !s;
     if (!s) return;
-    $('p-nm').textContent = s.name;
+    if (!$('p-nm').querySelector('input')) $('p-nm').textContent = s.name;
     $('p-ag').textContent = s.agent;
     $('p-cwd').textContent = s.cwd;
     $('p-sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
@@ -349,11 +350,35 @@
   // ---------- Kopfzeilen-Aktionen ----------
   $('b-rename').addEventListener('click', renamePrompt);
   $('p-nm').addEventListener('dblclick', renamePrompt);
+  // Inline-Umbenennen in der Kopfzeile (window.prompt gibt es in Electron nicht)
   function renamePrompt() {
     const s = sessionOf(activeId());
     if (!s) return;
-    const name = prompt('Neuer Name:', s.name);
-    if (name) send({ t: 'rename', id: s.id, name });
+    const nm = $('p-nm');
+    if (nm.querySelector('input')) return;
+    const input = document.createElement('input');
+    input.className = 'rename';
+    input.value = s.name;
+    input.setAttribute('aria-label', 'Neuer Name');
+    nm.textContent = '';
+    nm.appendChild(input);
+    input.focus();
+    input.select();
+    let finished = false;
+    const finish = commit => {
+      if (finished) return;
+      finished = true;
+      const val = input.value.trim();
+      if (commit && val && val !== s.name) send({ t: 'rename', id: s.id, name: val });
+      nm.textContent = commit && val ? val : s.name;
+      terms.get(s.id)?.term.focus();
+    };
+    input.addEventListener('keydown', e => {
+      e.stopPropagation();
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
   }
   $('b-close').addEventListener('click', () => {
     const s = sessionOf(activeId());
