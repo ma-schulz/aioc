@@ -125,23 +125,40 @@ class Session {
         break;
       case 'PreToolUse':
         if (payload.tool_name === 'AskUserQuestion') {
-          const q = payload.tool_input?.questions?.[0]?.question;
-          this.setStatus('waiting', q ? `Rückfrage: ${q}` : 'Rückfrage', 'hook');
+          const qs = payload.tool_input?.questions || [];
+          const q = qs[0]?.question;
+          const prefix = qs.length > 1 ? `Rückfragen (${qs.length})` : 'Rückfrage';
+          this.setStatus('waiting', q ? `${prefix}: ${q}` : prefix, 'hook');
         }
+        break;
+      case 'Elicitation':
+        this.setStatus('waiting', 'Eingabe angefragt (MCP)', 'hook');
         break;
       case 'PostToolUse':
         if (payload.tool_name === 'AskUserQuestion') this.setStatus('running', 'arbeitet', 'hook');
         break;
       case 'PermissionRequest': {
-        const t = payload.tool_name || payload.prompt || '';
+        const tool = payload.tool_name || '';
+        if (tool === 'AskUserQuestion') {
+          // Folgt direkt auf PreToolUse: dieselbe Rückfrage, keine Freigabe
+          if (this.entry.status === 'waiting') break;
+          const q = payload.tool_input?.questions?.[0]?.question;
+          this.setStatus('waiting', q ? `Rückfrage: ${q}` : 'Rückfrage', 'hook');
+          break;
+        }
+        const t = tool || payload.prompt || '';
         this.setStatus('waiting', t ? `Freigabe: ${t}` : 'Freigabe angefragt', 'hook');
         break;
       }
       case 'Notification': {
-        if (this.entry.status === 'done' || this.entry.status === 'exited') break;
-        const msg = payload.message || 'wartet auf dich';
-        if (/waiting for your input/i.test(msg) && this.entry.status !== 'running') break;
-        this.setStatus('waiting', msg, 'hook');
+        // Kommt bei Rückfragen/Freigaben ~6 s NACH PreToolUse/PermissionRequest nochmal generisch
+        // ("Claude needs your permission") - die spezifischere Meldung nie überschreiben.
+        if (this.entry.status === 'done' || this.entry.status === 'exited' || this.entry.status === 'waiting') break;
+        const type = payload.notification_type || '';
+        const msg = payload.message || '';
+        if (type === 'idle_prompt' || /waiting for your input/i.test(msg)) break;
+        const detail = type === 'permission_prompt' || /permission/i.test(msg) ? 'Freigabe oder Rückfrage offen' : (msg || 'wartet auf dich');
+        this.setStatus('waiting', detail, 'hook');
         break;
       }
       case 'Stop': {

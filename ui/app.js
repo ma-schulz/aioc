@@ -346,6 +346,7 @@
       b.querySelector('.nm').textContent = s.name;
       b.querySelector('.ag').textContent = s.agent;
       b.querySelector('.st').textContent = s.detail || '';
+      b.querySelector('.st').title = s.detail || '';
       b.addEventListener('click', () => assignToPane(focused, s.id));
       b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(s.id); });
       list.appendChild(b);
