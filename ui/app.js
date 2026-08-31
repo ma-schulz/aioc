@@ -36,7 +36,8 @@
       localStorage.setItem('aioc-collapsed', JSON.stringify([...collapsed]));
     } catch {}
   };
-  if (params.get('split') === '1') { panes.push({ id: null }); }
+  if (params.get('split') === '4') panes.push({ id: null }, { id: null }, { id: null });
+  else if (params.get('split') === '1' || params.get('split') === '2') panes.push({ id: null });
 
   const activeId = () => panes[focused]?.id || null;
   const sessionOf = id => sessions.find(s => s.id === id);
@@ -160,12 +161,16 @@
     if (s && s.unread) send({ t: 'markRead', id });
   }
 
+  // 1 Pane -> 2 nebeneinander -> 2x2 -> zurueck auf 1 (die fokussierte Session bleibt)
   function toggleSplit() {
     if (panes.length === 1) {
       panes.push({ id: null });
       focused = 1;
+    } else if (panes.length === 2) {
+      panes.push({ id: null }, { id: null });
+      focused = 2;
     } else {
-      panes.pop();
+      panes = [{ id: panes[focused]?.id || null }];
       focused = 0;
     }
     renderAll();
@@ -270,6 +275,7 @@
   function renderPanes() {
     const host = $('panes');
     host.classList.toggle('split', panes.length > 1);
+    host.classList.toggle('split4', panes.length === 4);
     // Pane-Elemente angleichen
     while (host.children.length < panes.length) {
       const el = document.createElement('div');

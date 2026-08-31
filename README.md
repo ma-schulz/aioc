@@ -33,8 +33,9 @@ Browser statt Electron: `http://127.0.0.1:43117/?token=<token>` — Token steht 
 
 ## Bedienung
 
-- **Geteilte Ansicht:** Alt+Shift+D teilt den Terminalbereich in zwei Panes (nochmal = zurück).
-  Klick in ein Pane fokussiert es; die Sidebar lädt Sessions immer ins fokussierte Pane.
+- **Geteilte Ansicht:** Alt+Shift+D schaltet 1 → 2 nebeneinander → 2×2 → zurück auf 1 (die
+  fokussierte Session bleibt). Klick in ein Pane fokussiert es; die Sidebar lädt Sessions immer
+  ins fokussierte Pane.
 - **Gruppen** (je Ordner) lassen sich per Klick auf die Überschrift zuklappen; zugeklappte
   Gruppen zeigen `?` (wartet) und `●` (ungelesen fertig) als Kurzhinweis.
 - **⇅-Schalter** sortiert wahlweise nach Ordner (Gruppen) oder nach Status (Wartet zuerst, flach).
