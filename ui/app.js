@@ -395,5 +395,37 @@
 
   new ResizeObserver(() => fitAll()).observe($('panes'));
 
+  // ---------- Sidebar-Breite (ziehbar, gemerkt) ----------
+  const root = document.documentElement;
+  try {
+    const w = parseInt(localStorage.getItem('aioc-sidew'), 10);
+    if (w >= 180 && w <= 700) root.style.setProperty('--sidew', w + 'px');
+  } catch {}
+  const resizer = $('resizer');
+  resizer.addEventListener('pointerdown', e => {
+    e.preventDefault();
+    resizer.setPointerCapture(e.pointerId);
+    resizer.classList.add('drag');
+    let w = 300;
+    const move = ev => {
+      w = Math.min(700, Math.max(180, Math.round(ev.clientX)));
+      root.style.setProperty('--sidew', w + 'px');
+      fitAll();
+    };
+    const up = () => {
+      resizer.classList.remove('drag');
+      resizer.removeEventListener('pointermove', move);
+      resizer.removeEventListener('pointerup', up);
+      try { localStorage.setItem('aioc-sidew', String(w)); } catch {}
+    };
+    resizer.addEventListener('pointermove', move);
+    resizer.addEventListener('pointerup', up);
+  });
+  resizer.addEventListener('dblclick', () => {
+    root.style.setProperty('--sidew', '300px');
+    try { localStorage.setItem('aioc-sidew', '300'); } catch {}
+    fitAll();
+  });
+
   connect();
 })();
