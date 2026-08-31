@@ -79,7 +79,17 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
 .searchbar { padding: 6px 14px; background: var(--bar); border-bottom: 1px solid var(--line); }
 .searchbar input { width: 380px; max-width: 90%; background: var(--bg); color: var(--fg); border: 1px solid #3D4657; border-radius: 4px; padding: 4px 8px; font-family: var(--mono); font-size: 12.5px; }
-.panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; background: var(--bg); }
+.panes { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; background: var(--bg); position: relative; }
+/* Hintergrundbild: eine Ebene unter allen Panes, Deckkraft wie backgroundImageOpacity im Windows Terminal */
+.panes.has-bg::before { content: ""; position: absolute; inset: 0; background: var(--bgimg) center / cover no-repeat; opacity: var(--bgopacity, .35); pointer-events: none; }
+.panes.has-bg .pane { position: relative; z-index: 1; }
+.panes.has-bg .xterm .xterm-viewport { background: transparent !important; }
+.popover { position: fixed; top: 38px; right: 10px; z-index: 50; width: 340px; background: var(--side); border: 1px solid #3D4657; border-radius: 8px; padding: 12px 14px; box-shadow: 0 12px 30px rgba(0, 0, 0, .5); }
+.popover .h { color: var(--white); font-weight: 500; margin-bottom: 4px; }
+.popover .hint { color: var(--dim); font-size: 12px; margin: 0 0 10px; }
+.popover .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+.popover .row label { color: var(--fg); }
+.popover input[type="range"] { flex: 1; accent-color: var(--blue); }
 .panes.split { grid-template-columns: 1fr 1fr; }
 .panes.split4 { grid-template-rows: 1fr 1fr; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }

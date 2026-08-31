@@ -35,6 +35,7 @@
 
   let ws = null, wsOk = false;
   let sessions = [], feed = [], recents = [], lan = { enabled: false, links: [] };
+  let background = { url: null, opacity: 0.35 };
   let filter = 'all', pendingSelectNew = false;
   let panes = [{ id: null }], focused = 0;
   const terms = new Map(); // id -> {term, fit, search, wrap, attached}
@@ -67,6 +68,10 @@
       const m = JSON.parse(e.data);
       if (m.t === 'hello' || m.t === 'sessions') {
         sessions = m.sessions; feed = m.feed || []; recents = m.recents || recents; lan = m.lan || lan;
+        if (m.background && (m.background.url !== background.url || m.background.opacity !== background.opacity)) {
+          background = m.background;
+          applyBackground();
+        }
         if (pendingSelectNew && sessions.length) {
           const newest = [...sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
           pendingSelectNew = false;
@@ -96,6 +101,40 @@
   }
   function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
+  // ---------- Hintergrundbild ----------
+  // Mit Bild wird der Terminal-Hintergrund durchsichtig; das Bild liegt als Ebene unter den Panes.
+  const themeFor = () => ({ ...THEME, background: background.url ? 'rgba(12, 12, 12, 0)' : THEME.background });
+  function applyBackground() {
+    const host = $('panes');
+    host.classList.toggle('has-bg', !!background.url);
+    host.style.setProperty('--bgimg', background.url ? `url("${background.url}")` : 'none');
+    host.style.setProperty('--bgopacity', String(background.opacity));
+    for (const t of terms.values()) t.term.options.theme = themeFor();
+    $('bgopacity').value = String(Math.round(background.opacity * 100));
+    $('bgopacityval').textContent = Math.round(background.opacity * 100) + ' %';
+    $('bgclear').hidden = !background.url;
+  }
+  $('settingsbtn').addEventListener('click', () => { const p = $('settings'); p.hidden = !p.hidden; });
+  document.addEventListener('mousedown', e => {
+    const p = $('settings');
+    if (!p.hidden && !p.contains(e.target) && e.target !== $('settingsbtn')) p.hidden = true;
+  });
+  $('bgfile').addEventListener('change', () => {
+    const file = $('bgfile').files[0];
+    if (!file) return;
+    if (file.size > 30 * 1024 * 1024) { alert('Bild ist größer als 30 MB.'); return; }
+    const fr = new FileReader();
+    fr.onload = () => send({ t: 'background', mime: file.type, data: String(fr.result).split(',')[1] || '' });
+    fr.readAsDataURL(file);
+    $('bgfile').value = '';
+  });
+  $('bgclear').addEventListener('click', () => send({ t: 'backgroundClear' }));
+  $('bgopacity').addEventListener('input', () => {
+    background.opacity = Number($('bgopacity').value) / 100;
+    applyBackground(); // sofort sichtbar …
+  });
+  $('bgopacity').addEventListener('change', () => send({ t: 'backgroundOpacity', value: Number($('bgopacity').value) / 100 })); // … und beim Loslassen speichern
+
   // ---------- Terminals ----------
   function ensureTerm(id) {
     let t = terms.get(id);
@@ -103,7 +142,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'termwrap';
     const term = new Terminal({
-      allowProposedApi: true, fontSize: 14, scrollback: 8000, theme: THEME,
+      allowProposedApi: true, allowTransparency: true, fontSize: 14, scrollback: 8000, theme: themeFor(),
       fontFamily: '"MesloLGM Nerd Font", "MesloLGM NF", "Cascadia Mono", Consolas, monospace',
     });
     const fit = new FitAddon.FitAddon();

@@ -70,5 +70,5 @@ module.exports = {
   loadDaemonInfo, saveDaemonInfo,
   loadSessions, saveSessionsDebounced, saveSessionsNow,
   saveScrollback, loadScrollback, deleteScrollback,
-  loadUiState, rememberRecent,
+  loadUiState, saveUiState, rememberRecent,
 };

@@ -71,6 +71,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - The `⇅` switch sorts by folder (grouped) or by status (waiting first, flat).
 - Drag the divider to resize the sidebar; double-click resets it.
 - Double-click a session name (in the sidebar or in the header) to rename it.
+- **⚙ Background image:** pick an image and set its opacity, like `backgroundImage` in Windows Terminal. The image is stored by the daemon, so remote windows show it too.
 - **Close** ends the process (asks first). **Remove** deletes an exited session and its scrollback from the list.
 
 ### After a reboot

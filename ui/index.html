@@ -17,6 +17,20 @@
   <span class="sp"></span>
   <span class="lan" id="lan"></span>
   <span class="conn" id="conn"></span>
+  <button class="btn dim" id="settingsbtn" title="Darstellung">⚙</button>
+</div>
+<div class="popover" id="settings" hidden>
+  <div class="h">Hintergrundbild</div>
+  <p class="hint">Liegt hinter dem Terminalbereich – wie im Windows Terminal. Wird beim Daemon gespeichert, gilt also auch für Fenster im LAN.</p>
+  <div class="row">
+    <label class="btn" for="bgfile">Bild wählen…</label>
+    <input id="bgfile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+    <button class="btn danger" id="bgclear">Entfernen</button>
+  </div>
+  <div class="row">
+    <label for="bgopacity">Deckkraft <span id="bgopacityval"></span></label>
+    <input id="bgopacity" type="range" min="5" max="100" step="5">
+  </div>
 </div>
 <div class="frame">
   <aside class="side">

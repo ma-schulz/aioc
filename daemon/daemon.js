@@ -41,6 +41,38 @@ const wss = new WebSocketServer({ noServer: true });
 let lanServer = null;
 let lanFp = null;
 
+// ---- Hintergrundbild (liegt beim Daemon, damit auch ferne Fenster es sehen) -----------------
+const BG_EXTS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+const BG_TYPES = { png: 'image/png', jpg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' };
+function backgroundFile() {
+  for (const ext of Object.keys(BG_TYPES)) {
+    const f = path.join(state.DIR, 'background.' + ext);
+    if (fs.existsSync(f)) return f;
+  }
+  return null;
+}
+function backgroundState() {
+  const f = backgroundFile();
+  const ui = state.loadUiState();
+  let v = 0;
+  try { v = f ? Math.floor(fs.statSync(f).mtimeMs) : 0; } catch {}
+  return { url: f ? `/background?v=${v}` : null, opacity: typeof ui.backgroundOpacity === 'number' ? ui.backgroundOpacity : 0.35 };
+}
+function setBackground(buf, mime) {
+  const ext = BG_EXTS[mime];
+  if (!ext) throw new Error('Bildformat nicht unterstützt: ' + mime);
+  clearBackground();
+  fs.writeFileSync(path.join(state.DIR, 'background.' + ext), buf);
+}
+function clearBackground() {
+  for (const ext of Object.keys(BG_TYPES)) { try { fs.unlinkSync(path.join(state.DIR, 'background.' + ext)); } catch {} }
+}
+function setBackgroundOpacity(v) {
+  const ui = state.loadUiState();
+  ui.backgroundOpacity = Math.min(1, Math.max(0.05, Number(v) || 0.35));
+  state.saveUiState(ui);
+}
+
 const mgr = new SessionManager(PORT, {
   onData: (id, d) => {
     for (const ws of wss.clients) if (ws.attached?.has(id)) send(ws, { t: 'data', id, d });
@@ -57,7 +89,7 @@ function lanState() {
 }
 
 function stateMsg(t) {
-  return { t, sessions: mgr.toClient(), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState() };
+  return { t, sessions: mgr.toClient(), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
 }
 
 function broadcastSessions() {
@@ -83,6 +115,16 @@ function handleRequest(req, res) {
     req.on('end', () => {
       try { mgr.handleHookEvent(JSON.parse(body)); } catch {}
       res.writeHead(204); res.end();
+    });
+    return;
+  }
+  if (url.pathname === '/background' && req.method === 'GET') {
+    const f = backgroundFile();
+    if (!f) { res.writeHead(404); res.end(); return; }
+    fs.readFile(f, (err, data) => {
+      if (err) { res.writeHead(404); res.end(); return; }
+      res.writeHead(200, { 'content-type': BG_TYPES[path.extname(f).slice(1)] || 'application/octet-stream', 'cache-control': 'private, max-age=86400' });
+      res.end(data);
     });
     return;
   }
@@ -145,6 +187,11 @@ wss.on('connection', ws => {
           if (m.enabled) startLan().catch(err => { mgr.pushFeed('LAN-Zugriff konnte nicht gestartet werden: ' + err.message); broadcastSessions(); });
           else stopLan();
           break;
+        case 'background':
+          if (typeof m.data === 'string' && m.data.length <= 30 * 1024 * 1024) { setBackground(Buffer.from(m.data, 'base64'), m.mime); broadcastSessions(); }
+          break;
+        case 'backgroundOpacity': setBackgroundOpacity(m.value); broadcastSessions(); break;
+        case 'backgroundClear': clearBackground(); broadcastSessions(); break;
         default: break;
       }
     } catch (err) {
