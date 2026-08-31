@@ -1,6 +1,9 @@
 // Aioc session manager: owns the PTYs (ConPTY via node-pty), a headless terminal per session
 // for scrollback/serialization, and the status engine (hook events + terminal title + heuristics).
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const { execFile } = require('child_process');
 const pty = require('node-pty');
 const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
@@ -8,6 +11,9 @@ const state = require('./state');
 const agents = require('./agents');
 
 const OSC_TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+// Taste, mit der der Agent ein Bild aus der System-Zwischenablage holt (verifiziert 31.08.2026)
+const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', pi: '\x16' };
+const CLIP_SCRIPT = path.join(__dirname, 'set-clipboard-image.ps1');
 
 class Session {
   constructor(mgr, entry) {
@@ -167,6 +173,24 @@ class Session {
 
   // ---- io -------------------------------------------------------------------------------
   write(d) { if (this.proc) this.proc.write(d); }
+
+  // Bild von einem (entfernten) Fenster: in die Zwischenablage DIESES Rechners legen und dem
+  // Agenten seine Bild-Taste schicken - derselbe Weg wie beim lokalen Ctrl+V.
+  pasteImage(buf, mime) {
+    const key = IMAGE_KEY[this.entry.agent];
+    if (!this.proc || !key) return;
+    const file = path.join(state.DIR, 'clipboard-image' + (mime === 'image/jpeg' ? '.jpg' : '.png'));
+    try { fs.writeFileSync(file, buf); } catch (err) { this.mgr.pushFeed(`${this.entry.name} · Bild konnte nicht gespeichert werden`); this.mgr.persistAndBroadcast(); return; }
+    execFile('powershell.exe', ['-STA', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', CLIP_SCRIPT, file],
+      { windowsHide: true, timeout: 20000 }, err => {
+        if (err) {
+          this.mgr.pushFeed(`${this.entry.name} · Bild-Einfügen fehlgeschlagen: ${err.message.split('\n')[0].slice(0, 80)}`);
+          this.mgr.persistAndBroadcast();
+          return;
+        }
+        this.write(key);
+      });
+  }
 
   resize(cols, rows) {
     if (!cols || !rows || cols < 2 || rows < 2) return;

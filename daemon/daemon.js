@@ -104,6 +104,9 @@ wss.on('connection', ws => {
           break;
         case 'detach': ws.attached.delete(m.id); break;
         case 'input': if (s) s.write(m.d); break;
+        case 'image':
+          if (s && typeof m.data === 'string' && m.data.length <= 40 * 1024 * 1024) s.pasteImage(Buffer.from(m.data, 'base64'), m.mime);
+          break;
         case 'resize': if (s) s.resize(m.cols, m.rows); break;
         case 'create': mgr.create({ agent: m.agent, cwd: m.cwd, name: m.name, args: m.args }); break;
         case 'restore': mgr.restore(m.id); break;

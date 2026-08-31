@@ -96,6 +96,7 @@ The hooks are a 20-line script that reads the hook JSON from stdin and posts it 
 - The daemon listens on `127.0.0.1` only and the WebSocket requires a token (`%USERPROFILE%\.aioc\daemon.json`).
 - A terminal is full access to your machine. If you change `host` in `daemon.json` to serve your LAN, keep the token, and never expose the port beyond that — use a VPN (Tailscale, WireGuard) instead of port forwarding.
 - The hook endpoint accepts loopback connections only.
+- Pasting an image from a remote window works too: the image is sent to the daemon over the (token-protected) WebSocket, placed in the clipboard of the daemon machine, and handed to the agent there — the same path a local `Ctrl+V` takes.
 
 ## Project layout
 

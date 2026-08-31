@@ -136,24 +136,38 @@
 
   // Einfügen: Text geht als (bracketed) Paste ins Terminal; ein Bild bekommt der Agent über
   // seine Bild-Taste und liest es selbst aus der System-Zwischenablage.
+  // Läuft das Fenster auf dem Daemon-Rechner, reicht die Bild-Taste (gleiche Zwischenablage).
+  // Aus der Ferne wird das Bild zum Daemon übertragen, der es dort in die Zwischenablage legt.
+  const LOCAL_UI = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
   async function pasteInto(id) {
     const s = sessionOf(id);
     const t = terms.get(id);
     if (!t) return;
-    let hasImage = false, text = '';
+    let imageBlob = null, text = '';
     try {
       const items = await navigator.clipboard.read();
       for (const it of items) {
-        if (it.types.some(ty => ty.startsWith('image/'))) hasImage = true;
+        const imgType = it.types.find(ty => ty.startsWith('image/'));
+        if (imgType && !imageBlob) imageBlob = await it.getType(imgType);
         if (it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
       }
     } catch {
       try { text = await navigator.clipboard.readText(); } catch {}
     }
     const imgKey = s && IMAGE_KEY[s.agent];
-    if (hasImage && imgKey) { send({ t: 'input', id, d: imgKey }); return; }
+    if (imageBlob && imgKey) {
+      if (LOCAL_UI) { send({ t: 'input', id, d: imgKey }); return; }
+      const data = await new Promise(resolve => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+        fr.onerror = () => resolve('');
+        fr.readAsDataURL(imageBlob);
+      });
+      if (data) send({ t: 'image', id, mime: imageBlob.type, data });
+      return;
+    }
     if (text) { t.term.paste(text); return; }
-    if (imgKey) send({ t: 'input', id, d: imgKey }); // kein Text lesbar: vermutlich ein Bild
+    if (imgKey && LOCAL_UI) send({ t: 'input', id, d: imgKey }); // kein Text lesbar: vermutlich ein Bild
   }
 
   function dropTerm(id) {
