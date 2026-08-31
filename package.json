@@ -2,7 +2,9 @@
   "name": "aioc",
   "version": "0.1.0",
   "private": true,
-  "description": "Aioc - Terminal-Manager fuer parallele Agenten-Sessions (Claude, Codex, Pi)",
+  "description": "One window for all your AI coding agents: Claude Code, Codex and Pi sessions side by side with live status",
+  "license": "MIT",
+  "author": "Matthias Schulz",
   "type": "commonjs",
   "scripts": {
     "daemon": "node daemon/daemon.js",

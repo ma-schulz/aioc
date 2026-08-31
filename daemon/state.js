@@ -4,7 +4,8 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 
-const DIR = path.join(os.homedir(), '.aioc');
+// AIOC_HOME erlaubt ein zweites, isoliertes Profil (z. B. zum Testen) neben ~/.aioc
+const DIR = process.env.AIOC_HOME || path.join(os.homedir(), '.aioc');
 const SCROLLBACK_DIR = path.join(DIR, 'scrollback');
 for (const d of [DIR, SCROLLBACK_DIR]) fs.mkdirSync(d, { recursive: true });
 
