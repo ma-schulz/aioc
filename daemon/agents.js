@@ -20,9 +20,6 @@ function buildEnv(port, sessionId, agent) {
   }
   env.AIOC_PORT = String(port);
   env.AIOC_SESSION = sessionId;
-  // Claude aktiviert sein Mausrad-Scrollen (Vollbild) nur in bekannten Terminals; die
-  // SGR-Sequenzen von Aioc sind identisch mit denen des Windows Terminals - also als WT auftreten.
-  if (agent === 'claude' && !env.WT_SESSION) env.WT_SESSION = require('crypto').randomUUID();
   return env;
 }
 
