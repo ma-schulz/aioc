@@ -53,6 +53,10 @@ class Session {
       this.proc = pty.spawn(spec.file, spec.args, {
         name: 'xterm-256color', cols: this.cols, rows: this.rows,
         cwd: this.entry.cwd, env: spec.env, useConpty: true,
+        // Neuere ConPTY-DLL aus node-pty statt der System-ConPTY: die System-Variante zerlegt
+        // SGR-Maus-Sequenzen unter win32-input-mode (?9001h, von Claude aktiviert) in
+        // zeichenweise Tastatur-Records - Mausrad-Scrollen kommt dann nie als Maus an.
+        useConptyDll: true,
       });
     } catch (err) {
       this.setStatus('exited', 'Start fehlgeschlagen: ' + err.message, 'system');

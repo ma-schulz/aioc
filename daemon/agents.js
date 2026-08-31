@@ -12,7 +12,7 @@ const AGENTS = ['claude', 'codex', 'pi', 'pwsh'];
 
 // Environment for spawned sessions: inherit, but strip CLAUDE* markers (a claude session that
 // spawned the daemon must not make child claudes think they are nested) and add Aioc markers.
-function buildEnv(port, sessionId) {
+function buildEnv(port, sessionId, agent) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (/^CLAUDE/i.test(k)) continue;
@@ -20,6 +20,9 @@ function buildEnv(port, sessionId) {
   }
   env.AIOC_PORT = String(port);
   env.AIOC_SESSION = sessionId;
+  // Claude aktiviert sein Mausrad-Scrollen (Vollbild) nur in bekannten Terminals; die
+  // SGR-Sequenzen von Aioc sind identisch mit denen des Windows Terminals - also als WT auftreten.
+  if (agent === 'claude' && !env.WT_SESSION) env.WT_SESSION = require('crypto').randomUUID();
   return env;
 }
 
@@ -67,7 +70,7 @@ function splitArgs(str) {
 // the agent's own conversation persistence after daemon/PC restart.
 function buildSpawn(entry, port, { resume = false } = {}) {
   const extra = splitArgs(entry.args);
-  const env = buildEnv(port, entry.id);
+  const env = buildEnv(port, entry.id, entry.agent);
   switch (entry.agent) {
     case 'claude': {
       const settings = writeClaudeSettings();

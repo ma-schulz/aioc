@@ -224,6 +224,20 @@
       if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
       return true;
     });
+    // Claude-Vollbild: Rad -> PageUp/PageDown. Claudes Windows-Build reagiert nicht auf die
+    // SGR-Maus-Sequenzen von xterm.js (in dieser ConPTY-Konstellation), wohl aber auf PgUp/PgDn -
+    // Claudes eigener Hinweis bei Scroll-Problemen lautet genauso ("use PgUp/PgDn to scroll").
+    let wheelAcc = 0;
+    wrap.addEventListener('wheel', ev => {
+      const s = sessionOf(id);
+      if (!s || s.agent !== 'claude' || term.buffer.active.type !== 'alternate') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      wheelAcc += ev.deltaY;
+      const PAGE = 220; // gut 2 Rad-Rasten je Seite
+      while (wheelAcc <= -PAGE) { send({ t: 'input', id, d: '\x1b[5~' }); wheelAcc += PAGE; }
+      while (wheelAcc >= PAGE) { send({ t: 'input', id, d: '\x1b[6~' }); wheelAcc -= PAGE; }
+    }, { capture: true, passive: false });
     // Touch-Wischen (Handy/Tablet): Apps mit Maus-Tracking (Claude-Vollbild) bekommen Rad-Ereignisse,
     // sonst scrollt xterm.js seinen Puffer selbst.
     let touchY = null;
