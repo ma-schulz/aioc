@@ -36,7 +36,7 @@ The status is **not guessed from screen output**. Each agent reports it through 
 Requirements: Windows 10/11 · [Node.js](https://nodejs.org) ≥ 20 (developed on 26) · the agents you want on your `PATH` (`claude`, `codex`, `pi`) · PowerShell 7 (`pwsh`) for shell sessions. Pi needs ≥ 0.84.4 for its *waiting* events.
 
 ```powershell
-git clone https://github.com/<your-user>/aioc.git
+git clone https://github.com/ma-schulz/aioc.git
 cd aioc
 npm install        # node-pty (prebuilt, no compiler needed), xterm.js, Electron
 .\aioc.cmd         # starts the daemon if needed and opens the window
