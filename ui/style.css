@@ -72,6 +72,8 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .phead .ag { font-family: var(--mono); font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .phead .cwd { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
 .phead .sid { font-family: var(--mono); font-size: 11px; color: #5C6470; }
+.phead .lim { font-size: 11px; color: var(--yellow); white-space: nowrap; }
+.popover .h + .h, .popover .row + .h { margin-top: 12px; }
 .phead .sp { flex: 1; }
 .btn { background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 1px 9px; cursor: pointer; font-size: 12px; }
 .btn:hover { background: #232A36; }

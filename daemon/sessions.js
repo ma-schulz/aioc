@@ -257,6 +257,7 @@ class SessionManager {
         entry.detail = 'vor Neustart · wiederherstellbar';
       }
       entry.unread = false;
+      entry.sizeInfo = null;
       this.sessions.set(entry.id, new Session(this, entry));
     }
   }
@@ -268,7 +269,7 @@ class SessionManager {
       id, agent, cwd, args: args || '',
       name: name || `${agent} · ${cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop()}`,
       createdAt: Date.now(), status: 'starting', detail: 'startet…', statusSource: 'system',
-      unread: false, title: '', agentSessionId: null, exitedAt: null,
+      unread: false, title: '', agentSessionId: null, exitedAt: null, sizeInfo: null,
     };
     const s = new Session(this, entry);
     this.sessions.set(id, s);

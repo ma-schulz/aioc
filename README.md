@@ -72,7 +72,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - The `⇅` switch sorts by folder (grouped) or by status (waiting first, flat).
 - Drag the divider to resize the sidebar; double-click resets it.
 - Double-click a session name (in the sidebar or in the header) to rename it.
-- **⚙ Background image:** pick an image and set its opacity, like `backgroundImage` in Windows Terminal. The image is stored by the daemon, so remote windows show it too.
+- **⚙ Background image and per-device settings:** pick an image (stored by the daemon, so remote windows show it too), and set opacity and terminal font size for *this* device — like `backgroundImage` in Windows Terminal.
 - **Close** ends the process (asks first). **Remove** deletes an exited session and its scrollback from the list.
 
 ### After a reboot
@@ -108,6 +108,12 @@ The window is only a client, so it can run somewhere else — a laptop, a tablet
    - **Second PC with this repo:** `aioc-remote.cmd "<link>"` opens an Aioc window that pins the daemon's certificate to the fingerprint from the link — no certificate warning, and any other certificate is rejected.
 
 Pasting an image from a remote window works too: the image travels over the WebSocket to the daemon, is placed in the clipboard of the daemon machine and handed to the agent there — the same path a local `Ctrl+V` takes. **LAN aus** closes the listener and drops remote clients; local use continues untouched.
+
+### Several windows at once
+
+All clients load the same web UI, but each one keeps its own view: pane layout and split state, filter, sort order, collapsed groups, sidebar width, font size and background opacity live in that device's browser storage (the background image itself is stored by the daemon). Sessions, status, scrollback, names and unread markers are shared and pushed live to everyone, so you can work on different sessions from different devices in parallel.
+
+The one thing a session cannot have twice is its terminal size. When two clients show the same session, the **smallest current viewer sets the size** (as in tmux) and the header shows who is limiting it, e.g. `⧉ Größe: Handy 60×20`. As soon as that client leaves the session — back to the list, another session, connection closed — the limit is lifted immediately and the larger window gets its size back.
 
 ## Security
 

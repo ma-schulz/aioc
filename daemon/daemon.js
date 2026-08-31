@@ -84,6 +84,37 @@ mgr.adoptSaved();
 
 function send(ws, obj) { if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} } }
 
+// ---- Groesse je Session = kleinster aktueller Betrachter (tmux-Prinzip) --------------------
+// Jeder Client meldet fuer angezeigte Sessions seine Groesse; verlaesst er die Session (detach,
+// Verbindungsende), faellt seine Begrenzung sofort weg.
+function viewerLabel(req) {
+  const ua = req.headers['user-agent'] || '';
+  const kind = /Mobile|Android|iPhone|iPad/i.test(ua) ? 'Handy' : /Electron/i.test(ua) ? 'Fenster' : 'Browser';
+  return req.socket.encrypted ? `${kind} (LAN)` : kind;
+}
+
+function recomputeSize(id) {
+  const s = mgr.sessions.get(id);
+  if (!s) return;
+  const viewers = [];
+  for (const ws of wss.clients) {
+    const sz = ws.attached?.has(id) && ws.sizes?.get(id);
+    if (sz) viewers.push({ ...sz, label: ws.label });
+  }
+  const before = JSON.stringify(s.entry.sizeInfo || null);
+  if (!viewers.length) {
+    s.entry.sizeInfo = null;
+  } else {
+    const cols = Math.min(...viewers.map(v => v.cols));
+    const rows = Math.min(...viewers.map(v => v.rows));
+    const smallest = viewers.find(v => v.cols === cols || v.rows === rows);
+    const limited = viewers.some(v => v.cols > cols || v.rows > rows);
+    s.resize(cols, rows);
+    s.entry.sizeInfo = { cols, rows, viewers: viewers.length, limitedBy: limited ? `${smallest.label} ${smallest.cols}×${smallest.rows}` : null };
+  }
+  if (JSON.stringify(s.entry.sizeInfo || null) !== before) broadcastSessions();
+}
+
 let lanQr = null; // SVG-QR-Code des ersten Verbindungslinks (fuers Handy)
 function lanState() {
   return { enabled: !!lanServer, port: info.lanPort, fp: lanFp, links: lanServer ? lanLinks(info, lanFp) : [], qr: lanServer ? lanQr : null };
@@ -165,13 +196,20 @@ function handleUpgrade(req, socket, head) {
   }
   wss.handleUpgrade(req, socket, head, ws => {
     ws.viaLan = !!req.socket.encrypted;
-    console.log(`[aioc] Client ${req.socket.remoteAddress} ${ws.viaLan ? 'TLS' : 'lokal'} · ${(req.headers['user-agent'] || '').slice(0, 70)}`);
+    ws.label = viewerLabel(req);
+    console.log(`[aioc] Client ${req.socket.remoteAddress} ${ws.viaLan ? 'TLS' : 'lokal'} · ${ws.label} · ${(req.headers['user-agent'] || '').slice(0, 60)}`);
     wss.emit('connection', ws, req);
   });
 }
 
 wss.on('connection', ws => {
   ws.attached = new Set();
+  ws.sizes = new Map();
+  ws.on('close', () => {
+    const ids = [...ws.attached];
+    ws.attached.clear(); ws.sizes.clear();
+    for (const id of ids) recomputeSize(id);
+  });
   send(ws, stateMsg('hello'));
   ws.on('message', raw => {
     let m; try { m = JSON.parse(raw); } catch { return; }
@@ -183,12 +221,14 @@ wss.on('connection', ws => {
           ws.attached.add(m.id);
           send(ws, { t: 'snapshot', id: m.id, data: s.snapshot(), running: !!s.proc });
           break;
-        case 'detach': ws.attached.delete(m.id); break;
+        case 'detach': ws.attached.delete(m.id); ws.sizes.delete(m.id); recomputeSize(m.id); break;
         case 'input': if (s) s.write(m.d); break;
         case 'image':
           if (s && typeof m.data === 'string' && m.data.length <= 40 * 1024 * 1024) s.pasteImage(Buffer.from(m.data, 'base64'), m.mime);
           break;
-        case 'resize': if (s) s.resize(m.cols, m.rows); break;
+        case 'resize':
+          if (s && m.cols > 1 && m.rows > 1) { ws.attached.add(m.id); ws.sizes.set(m.id, { cols: m.cols, rows: m.rows }); recomputeSize(m.id); }
+          break;
         case 'create': mgr.create({ agent: m.agent, cwd: m.cwd, name: m.name, args: m.args, cols: m.cols, rows: m.rows }); break;
         case 'restore': mgr.restore(m.id, m.cols, m.rows); break;
         case 'restoreAll': mgr.restoreAll(m.cols, m.rows); break;

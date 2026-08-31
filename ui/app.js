@@ -42,6 +42,27 @@
   let ws = null, wsOk = false;
   let sessions = [], feed = [], recents = [], lan = { enabled: false, links: [] };
   let background = { url: null, opacity: 0.35 };
+  // Einstellungen dieses Geräts (localStorage): Schriftgröße, Deckkraft, Layout
+  let fontSize = 14, localOpacity = null, layoutRestored = false;
+  try {
+    fontSize = Number(localStorage.getItem('aioc-fontsize')) || 14;
+    const lo = localStorage.getItem('aioc-bgopacity');
+    if (lo !== null && lo !== '') localOpacity = Number(lo);
+  } catch {}
+  function saveLayout() {
+    try { localStorage.setItem('aioc-layout', JSON.stringify({ panes: panes.map(p => p.id), focused })); } catch {}
+  }
+  function restoreLayout() {
+    if (layoutRestored) return;
+    layoutRestored = true;
+    if (params.get('split')) return;
+    try {
+      const lay = JSON.parse(localStorage.getItem('aioc-layout') || 'null');
+      if (!lay || ![1, 2, 4].includes(lay.panes?.length)) return;
+      panes = lay.panes.map(id => ({ id: sessions.some(s => s.id === id) ? id : null }));
+      focused = Math.min(lay.focused || 0, panes.length - 1);
+    } catch {}
+  }
   let filter = 'all', pendingSelectNew = false;
   let panes = [{ id: null }], focused = 0;
   const terms = new Map(); // id -> {term, fit, search, wrap, attached}
@@ -83,8 +104,9 @@
           pendingSelectNew = false;
           panes[focused].id = newest.id;
         }
+        if (m.t === 'hello') restoreLayout();
         for (const p of panes) if (p.id && !sessionOf(p.id)) p.id = null;
-        if (!activeId() && sessions.length && panes.length === 1) panes[0].id = sessions[0].id;
+        if (!activeId() && sessions.length && panes.length === 1 && !MOBILE.matches) panes[0].id = sessions[0].id;
         // Geteilt gestartet (?split=…) und noch leer: die ersten Sessions auf die Panes verteilen
         if (m.t === 'hello' && panes.length > 1 && panes.every(p => !p.id)) {
           sessions.slice(0, panes.length).forEach((s, i) => { panes[i].id = s.id; });
@@ -101,6 +123,7 @@
       } else if (m.t === 'gone') {
         dropTerm(m.id);
         for (const p of panes) if (p.id === m.id) p.id = null;
+        saveLayout();
         renderAll();
       }
     };
@@ -110,16 +133,29 @@
   // ---------- Hintergrundbild ----------
   // Mit Bild wird der Terminal-Hintergrund durchsichtig; das Bild liegt als Ebene unter den Panes.
   const themeFor = () => ({ ...THEME, background: background.url ? 'rgba(12, 12, 12, 0)' : THEME.background });
+  const effectiveOpacity = () => (localOpacity ?? background.opacity);
   function applyBackground() {
     const host = $('panes');
     host.classList.toggle('has-bg', !!background.url);
     host.style.setProperty('--bgimg', background.url ? `url("${background.url}")` : 'none');
-    host.style.setProperty('--bgopacity', String(background.opacity));
+    host.style.setProperty('--bgopacity', String(effectiveOpacity()));
     for (const t of terms.values()) t.term.options.theme = themeFor();
-    $('bgopacity').value = String(Math.round(background.opacity * 100));
-    $('bgopacityval').textContent = Math.round(background.opacity * 100) + ' %';
+    $('bgopacity').value = String(Math.round(effectiveOpacity() * 100));
+    $('bgopacityval').textContent = Math.round(effectiveOpacity() * 100) + ' %';
     $('bgclear').hidden = !background.url;
+    $('fontsize').value = String(fontSize);
+    $('fontsizeval').textContent = fontSize + ' px';
   }
+  function applyFontSize() {
+    for (const t of terms.values()) t.term.options.fontSize = fontSize;
+    $('fontsizeval').textContent = fontSize + ' px';
+    fitAll();
+  }
+  $('fontsize').addEventListener('input', () => {
+    fontSize = Number($('fontsize').value) || 14;
+    try { localStorage.setItem('aioc-fontsize', String(fontSize)); } catch {}
+    applyFontSize();
+  });
   $('settingsbtn').addEventListener('click', () => { const p = $('settings'); p.hidden = !p.hidden; });
   document.addEventListener('mousedown', e => {
     const p = $('settings');
@@ -138,10 +174,10 @@
   });
   $('bgclear').addEventListener('click', () => send({ t: 'backgroundClear' }));
   $('bgopacity').addEventListener('input', () => {
-    background.opacity = Number($('bgopacity').value) / 100;
-    applyBackground(); // sofort sichtbar …
+    localOpacity = Number($('bgopacity').value) / 100; // Deckkraft gilt nur für dieses Gerät
+    try { localStorage.setItem('aioc-bgopacity', String(localOpacity)); } catch {}
+    applyBackground();
   });
-  $('bgopacity').addEventListener('change', () => send({ t: 'backgroundOpacity', value: Number($('bgopacity').value) / 100 })); // … und beim Loslassen speichern
 
   // ---------- Terminals ----------
   function ensureTerm(id) {
@@ -150,7 +186,7 @@
     const wrap = document.createElement('div');
     wrap.className = 'termwrap';
     const term = new Terminal({
-      allowProposedApi: true, allowTransparency: true, fontSize: 14, scrollback: 8000, theme: themeFor(),
+      allowProposedApi: true, allowTransparency: true, fontSize, scrollback: 8000, theme: themeFor(),
       fontFamily: '"MesloLGM Nerd Font", "MesloLGM NF", "Cascadia Mono", Consolas, monospace',
     });
     const fit = new FitAddon.FitAddon();
@@ -272,6 +308,7 @@
     for (let i = 0; i < panes.length; i++) if (i !== paneIdx && panes[i].id === id) panes[i].id = null;
     panes[paneIdx].id = id;
     focused = paneIdx;
+    saveLayout();
     ensureAttached(id);
     if (MOBILE.matches) document.body.classList.add('show-term'); // Handy: Terminal statt Liste zeigen
     renderAll();
@@ -308,6 +345,7 @@
       panes = [{ id: panes[focused]?.id || null }];
       focused = 0;
     }
+    saveLayout();
     renderAll();
     fitAll();
   }
@@ -467,6 +505,7 @@
         <span class="ag"></span>
         <span class="cwd"></span>
         <span class="sid"></span>
+        <span class="lim" title="Ein anderer Client zeigt diese Session gerade kleiner an – die kleinste Ansicht bestimmt die Terminalgröße"></span>
         <span class="sp"></span>
         <button class="btn b-restore" hidden>Wiederherstellen</button>
         <button class="btn b-rename">Umbenennen</button>
@@ -521,6 +560,7 @@
         head.querySelector('.ag').textContent = s.agent;
         head.querySelector('.cwd').textContent = s.cwd;
         head.querySelector('.sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
+        head.querySelector('.lim').textContent = s.sizeInfo?.limitedBy ? '⧉ Größe: ' + s.sizeInfo.limitedBy : '';
         head.querySelector('.b-close').hidden = !s.running;
         head.querySelector('.b-restore').hidden = !!s.running;
         head.querySelector('.b-restore').textContent = s.agent === 'pwsh' ? 'Neu starten' : (s.agentSessionId ? 'Wiederherstellen' : 'Neu starten');
@@ -529,7 +569,12 @@
         if (t.wrap.parentElement !== body) body.appendChild(t.wrap);
       }
     });
-    for (const [id, t] of terms) t.wrap.classList.toggle('active', panes.some(p => p.id === id));
+    for (const [id, t] of terms) {
+      const shown = panes.some(p => p.id === id);
+      t.wrap.classList.toggle('active', shown);
+      // Nicht mehr angezeigte Sessions loslassen: ihre Groessenvorgabe faellt beim Daemon sofort weg
+      if (!shown && t.attached) { t.attached = false; t.sentCols = t.sentRows = undefined; send({ t: 'detach', id }); }
+    }
   }
 
   // Inline-Umbenennen in der Kopfzeile des Panes (window.prompt gibt es in Electron nicht)
