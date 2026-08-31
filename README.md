@@ -49,6 +49,7 @@ Other ways to run it:
 ```powershell
 npm run daemon     # daemon only (e.g. for autostart)
 npm run app        # window only
+.\aioc-restart.cmd # restart the daemon after an update — sessions come back as "before restart"
 ```
 
 Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — the token is in `%USERPROFILE%\.aioc\daemon.json`.
