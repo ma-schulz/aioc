@@ -104,7 +104,7 @@ The window is only a client, so it can run somewhere else — a laptop, a tablet
 2. Allow the port in Windows Firewall once (as administrator): `netsh advfirewall firewall add rule name="Aioc LAN" dir=in action=allow protocol=TCP localport=43443`
 3. Click **Link kopieren**. The link carries the access token and the certificate fingerprint, e.g. `https://192.168.1.10:43443/?token=…&fp=…`.
 4. On the other device:
-   - **Browser / tablet:** open the link, accept the self-signed certificate once, and use *Add to Home Screen* — Aioc ships a PWA manifest, so it opens as its own app. The token is remembered in the browser.
+   - **Phone / tablet:** click **QR fürs Handy**, scan the code (same Wi-Fi), accept the self-signed certificate once, and use *Add to Home Screen* — Aioc ships a PWA manifest whose start URL carries the token, so the installed app opens straight into your sessions. On narrow screens Aioc shows the session list first; tapping a session opens its terminal full-screen, **‹ Liste** goes back.
    - **Second PC with this repo:** `aioc-remote.cmd "<link>"` opens an Aioc window that pins the daemon's certificate to the fingerprint from the link — no certificate warning, and any other certificate is rejected.
 
 Pasting an image from a remote window works too: the image travels over the WebSocket to the daemon, is placed in the clipboard of the daemon machine and handed to the agent there — the same path a local `Ctrl+V` takes. **LAN aus** closes the listener and drops remote clients; local use continues untouched.

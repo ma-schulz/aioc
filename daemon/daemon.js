@@ -84,8 +84,9 @@ mgr.adoptSaved();
 
 function send(ws, obj) { if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} } }
 
+let lanQr = null; // SVG-QR-Code des ersten Verbindungslinks (fuers Handy)
 function lanState() {
-  return { enabled: !!lanServer, port: info.lanPort, fp: lanFp, links: lanServer ? lanLinks(info, lanFp) : [] };
+  return { enabled: !!lanServer, port: info.lanPort, fp: lanFp, links: lanServer ? lanLinks(info, lanFp) : [], qr: lanServer ? lanQr : null };
 }
 
 function stateMsg(t) {
@@ -115,6 +116,18 @@ function handleRequest(req, res) {
     req.on('end', () => {
       try { mgr.handleHookEvent(JSON.parse(body)); } catch {}
       res.writeHead(204); res.end();
+    });
+    return;
+  }
+  // PWA-Manifest: mit gueltigem Token bekommt start_url das Token mit (iOS-Homescreen-Apps teilen
+  // keinen localStorage mit Safari, sonst stuende die installierte App ohne Zugang da)
+  if (url.pathname === '/manifest.webmanifest' && req.method === 'GET' && url.searchParams.get('token') === info.token) {
+    fs.readFile(STATIC['/manifest.webmanifest'][0], 'utf8', (err, data) => {
+      if (err) { res.writeHead(404); res.end(); return; }
+      let m; try { m = JSON.parse(data); } catch { m = {}; }
+      m.start_url = `/?token=${encodeURIComponent(info.token)}`;
+      res.writeHead(200, { 'content-type': 'application/manifest+json', 'cache-control': 'no-cache' });
+      res.end(JSON.stringify(m));
     });
     return;
   }
@@ -214,6 +227,10 @@ async function startLan() {
   lanFp = fp;
   info.lan = true;
   persistInfo();
+  try {
+    const first = lanLinks(info, fp)[0];
+    lanQr = first ? await require('qrcode').toString(first, { type: 'svg', margin: 1, color: { dark: '#000000', light: '#ffffff' } }) : null;
+  } catch { lanQr = null; }
   mgr.pushFeed(`LAN-Zugriff EIN · HTTPS-Port ${info.lanPort} · Firewall muss node.exe eingehend erlauben`);
   console.log(`[aioc] LAN-Listener auf https://0.0.0.0:${info.lanPort} (Fingerprint ${fp})`);
   broadcastSessions();

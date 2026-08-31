@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1C2027">
 <title>Aioc</title>
-<link rel="manifest" href="/manifest.webmanifest">
+<link rel="manifest" href="/manifest.webmanifest" id="manifestlink">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/vendor/xterm.css">
 <link rel="stylesheet" href="/style.css">
@@ -18,6 +18,12 @@
   <span class="lan" id="lan"></span>
   <span class="conn" id="conn"></span>
   <button class="btn dim" id="settingsbtn" title="Darstellung">⚙</button>
+</div>
+<div class="popover qr" id="lanqr" hidden>
+  <div class="h">Mit dem Handy verbinden</div>
+  <p class="hint">Gleiches WLAN, QR-Code scannen, Zertifikat einmal bestätigen, dann „Zum Home-Bildschirm" – der Link enthält Token und Zertifikats-Fingerprint, also privat halten.</p>
+  <div id="lanqrimg"></div>
+  <code id="lanqrlink"></code>
 </div>
 <div class="popover" id="settings" hidden>
   <div class="h">Hintergrundbild</div>

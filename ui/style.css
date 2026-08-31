@@ -90,6 +90,28 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .popover .row { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
 .popover .row label { color: var(--fg); }
 .popover input[type="range"] { flex: 1; accent-color: var(--blue); }
+.popover.qr { width: 320px; }
+.popover.qr #lanqrimg svg { width: 260px; height: 260px; display: block; margin: 6px auto; background: #fff; padding: 8px; border-radius: 6px; }
+.popover.qr code { display: block; font-family: var(--mono); font-size: 10.5px; color: var(--dim); word-break: break-all; margin-top: 6px; }
+.back { display: none; }
+
+/* Handy / schmale Fenster: Liste ODER Terminal, nicht nebeneinander */
+@media (max-width: 700px) {
+  .frame { grid-template-columns: 1fr; }
+  #resizer, .statusbar { display: none; }
+  .main { display: none; }
+  body.show-term .side, body.show-term #resizer { display: none; }
+  body.show-term .main { display: flex; }
+  .back { display: inline-block; }
+  .titlebar { flex-wrap: wrap; gap: 8px; }
+  .titlebar .counts { display: none; }
+  .titlebar .lan code { display: none; }
+  .frame { height: auto; min-height: calc(100vh - 33px); }
+  .panes.split { grid-template-columns: 1fr; }
+  .panes.split4 { grid-template-rows: none; }
+  .phead .cwd, .phead .sid { display: none; }
+  .popover { left: 10px; right: 10px; width: auto; }
+}
 .panes.split { grid-template-columns: 1fr 1fr; }
 .panes.split4 { grid-template-rows: 1fr 1fr; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }

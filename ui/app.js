@@ -9,6 +9,8 @@
     else token = localStorage.getItem('aioc-token') || '';
   } catch {}
   const $ = id => document.getElementById(id);
+  if (token) $('manifestlink').href = '/manifest.webmanifest?token=' + encodeURIComponent(token);
+  const MOBILE = window.matchMedia('(max-width: 700px)');
 
   const THEME = {
     background: '#0C0C0C', foreground: '#CCCCCC', cursor: '#FFFFFF', selectionBackground: '#264F78',
@@ -122,6 +124,8 @@
   document.addEventListener('mousedown', e => {
     const p = $('settings');
     if (!p.hidden && !p.contains(e.target) && e.target !== $('settingsbtn')) p.hidden = true;
+    const q = $('lanqr');
+    if (!q.hidden && !q.contains(e.target) && !e.target.closest('#lan')) q.hidden = true;
   });
   $('bgfile').addEventListener('change', () => {
     const file = $('bgfile').files[0];
@@ -269,6 +273,7 @@
     panes[paneIdx].id = id;
     focused = paneIdx;
     ensureAttached(id);
+    if (MOBILE.matches) document.body.classList.add('show-term'); // Handy: Terminal statt Liste zeigen
     renderAll();
     fitAll();
     requestAnimationFrame(() => terms.get(id)?.term.focus());
@@ -337,6 +342,17 @@
           navigator.clipboard?.writeText(link).then(() => { copy.textContent = 'Kopiert ✓'; setTimeout(() => (copy.textContent = 'Link kopieren'), 1500); }).catch(() => {});
         });
         el.appendChild(copy);
+      }
+      if (lan.qr) {
+        const qr = document.createElement('button');
+        qr.className = 'btn';
+        qr.textContent = 'QR fürs Handy';
+        qr.addEventListener('click', () => {
+          const p = $('lanqr');
+          p.hidden = !p.hidden;
+          if (!p.hidden) { $('lanqrimg').innerHTML = lan.qr; $('lanqrlink').textContent = link; $('settings').hidden = true; }
+        });
+        el.appendChild(qr);
       }
       const off = document.createElement('button');
       off.className = 'btn';
@@ -446,6 +462,7 @@
     el.className = 'pane';
     el.innerHTML = `
       <div class="phead">
+        <button class="btn back" title="Zurück zur Liste">‹ Liste</button>
         <span class="nm" title="Doppelklick: umbenennen"></span>
         <span class="ag"></span>
         <span class="cwd"></span>
@@ -464,6 +481,7 @@
       const idx = [...host.children].indexOf(el);
       if (idx >= 0 && idx !== focused) { focused = idx; renderAll(); }
     }, true);
+    el.querySelector('.back').addEventListener('click', () => { document.body.classList.remove('show-term'); renderAll(); });
     el.querySelector('.b-rename').addEventListener('click', () => renamePrompt(idOf()));
     el.querySelector('.nm').addEventListener('dblclick', () => renamePrompt(idOf()));
     el.querySelector('.b-close').addEventListener('click', () => {
