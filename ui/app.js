@@ -224,6 +224,22 @@
       if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
       return true;
     });
+    // Touch-Wischen (Handy/Tablet): Apps mit Maus-Tracking (Claude-Vollbild) bekommen Rad-Ereignisse,
+    // sonst scrollt xterm.js seinen Puffer selbst.
+    let touchY = null;
+    wrap.addEventListener('touchstart', e => { touchY = e.touches[0]?.clientY ?? null; }, { passive: true });
+    wrap.addEventListener('touchmove', e => {
+      if (touchY === null || term.modes.mouseTrackingMode === 'none') return;
+      const y = e.touches[0].clientY;
+      const step = 24; // px je Rad-Tick
+      while (Math.abs(y - touchY) >= step) {
+        const dir = y > touchY ? -1 : 1; // nach unten wischen = Inhalt nach oben scrollen
+        wrap.querySelector('.xterm-screen')?.dispatchEvent(new WheelEvent('wheel', { deltaY: dir * 100, clientX: e.touches[0].clientX, clientY: y, bubbles: true, cancelable: true }));
+        touchY += dir * -step;
+      }
+      e.preventDefault();
+    }, { passive: false });
+    wrap.addEventListener('touchend', () => { touchY = null; }, { passive: true });
     // Rechtsklick wie im Windows Terminal: Auswahl kopieren, sonst einfügen
     wrap.addEventListener('contextmenu', e => {
       e.preventDefault();
