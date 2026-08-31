@@ -134,9 +134,9 @@ wss.on('connection', ws => {
           if (s && typeof m.data === 'string' && m.data.length <= 40 * 1024 * 1024) s.pasteImage(Buffer.from(m.data, 'base64'), m.mime);
           break;
         case 'resize': if (s) s.resize(m.cols, m.rows); break;
-        case 'create': mgr.create({ agent: m.agent, cwd: m.cwd, name: m.name, args: m.args }); break;
-        case 'restore': mgr.restore(m.id); break;
-        case 'restoreAll': mgr.restoreAll(); break;
+        case 'create': mgr.create({ agent: m.agent, cwd: m.cwd, name: m.name, args: m.args, cols: m.cols, rows: m.rows }); break;
+        case 'restore': mgr.restore(m.id, m.cols, m.rows); break;
+        case 'restoreAll': mgr.restoreAll(m.cols, m.rows); break;
         case 'close': mgr.close(m.id); break;
         case 'dispose': mgr.dispose(m.id); break;
         case 'rename': mgr.rename(m.id, m.name); break;

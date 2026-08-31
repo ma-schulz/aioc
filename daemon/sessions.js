@@ -261,7 +261,7 @@ class SessionManager {
     }
   }
 
-  create({ agent, cwd, name, args }) {
+  create({ agent, cwd, name, args, cols, rows }) {
     if (!agents.AGENTS.includes(agent)) throw new Error('Unbekannter Agent: ' + agent);
     const id = crypto.randomBytes(5).toString('hex');
     const entry = {
@@ -273,22 +273,24 @@ class SessionManager {
     const s = new Session(this, entry);
     this.sessions.set(id, s);
     state.rememberRecent(cwd);
+    s.resize(cols, rows); // Groesse des anzeigenden Panes, damit die erste Ausgabe passt
     s.spawn();
     this.pushFeed(`${entry.name} · gestartet`);
     this.persistAndBroadcast();
     return s;
   }
 
-  restore(id) {
+  restore(id, cols, rows) {
     const s = this.sessions.get(id);
     if (!s || s.proc) return;
+    s.resize(cols, rows);
     s.spawn({ resume: true });
     this.pushFeed(`${s.entry.name} · wiederhergestellt`);
     this.persistAndBroadcast();
   }
 
-  restoreAll() {
-    for (const s of this.sessions.values()) if (!s.proc && s.entry.status === 'exited') this.restore(s.entry.id);
+  restoreAll(cols, rows) {
+    for (const s of this.sessions.values()) if (!s.proc && s.entry.status === 'exited') this.restore(s.entry.id, cols, rows);
   }
 
   close(id) { this.sessions.get(id)?.kill(); }

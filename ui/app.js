@@ -80,6 +80,7 @@
         }
         renderAll();
         for (const p of panes) if (p.id) ensureAttached(p.id);
+        fitAll(); // neu zugewiesene Panes sofort an die echte Größe anpassen
       } else if (m.t === 'snapshot') {
         const t = terms.get(m.id);
         if (t) { t.term.reset(); if (m.data) t.term.write(m.data); }
@@ -195,6 +196,9 @@
     return t;
   }
 
+  // Zuletzt gemessene Pane-Größe: neue Sessions werden damit gestartet, damit die erste
+  // Ausgabe schon in der richtigen Breite ankommt (statt 120x32-Standard + späterem Umbruch).
+  const lastSize = { cols: 120, rows: 32 };
   function fitPane(i) {
     const id = panes[i]?.id;
     if (!id) return;
@@ -202,7 +206,12 @@
     if (!t || !t.wrap.classList.contains('active')) return;
     try {
       t.fit.fit();
-      send({ t: 'resize', id, cols: t.term.cols, rows: t.term.rows });
+      const { cols, rows } = t.term;
+      if (cols > 10 && rows > 3) { lastSize.cols = cols; lastSize.rows = rows; }
+      if (t.sentCols !== cols || t.sentRows !== rows) {
+        t.sentCols = cols; t.sentRows = rows;
+        send({ t: 'resize', id, cols, rows });
+      }
     } catch {}
   }
   const fitAll = () => requestAnimationFrame(() => panes.forEach((_, i) => fitPane(i)));
@@ -417,7 +426,11 @@
       const s = sessionOf(idOf());
       if (s && confirm(`„${s.name}" samt Scrollback aus der Liste entfernen?`)) send({ t: 'dispose', id: s.id });
     });
-    el.querySelector('.b-restore').addEventListener('click', () => { const id = idOf(); if (id) send({ t: 'restore', id }); });
+    el.querySelector('.b-restore').addEventListener('click', () => {
+      const id = idOf();
+      const t = id && terms.get(id);
+      if (id) send({ t: 'restore', id, cols: t?.term.cols || lastSize.cols, rows: t?.term.rows || lastSize.rows });
+    });
     return el;
   }
 
@@ -504,11 +517,11 @@
     const cwd = $('f-cwd').value.trim();
     if (!cwd) return;
     pendingSelectNew = true;
-    send({ t: 'create', agent: dlgAgent, cwd, name: $('f-name').value.trim(), args: $('f-args').value.trim() });
+    send({ t: 'create', agent: dlgAgent, cwd, name: $('f-name').value.trim(), args: $('f-args').value.trim(), cols: lastSize.cols, rows: lastSize.rows });
   });
   $('f-cancel').addEventListener('click', () => $('newdlg').close());
   $('newbtn').addEventListener('click', openNew);
-  $('restoreall').addEventListener('click', () => send({ t: 'restoreAll' }));
+  $('restoreall').addEventListener('click', () => send({ t: 'restoreAll', cols: lastSize.cols, rows: lastSize.rows }));
 
   // ---------- Filter + Sortierung ----------
   document.querySelectorAll('.chip[data-f]').forEach(ch =>
