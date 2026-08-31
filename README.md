@@ -61,6 +61,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | `Ctrl+Shift+N` | New session |
 | `Ctrl+1 … 9` | Switch to the n-th session in the list |
 | `Alt+Shift+D` | Split: one pane → two side by side → 2×2 → back to one |
+| `Alt+← → ↑ ↓` | Move focus between panes (like Windows Terminal) |
 | `Ctrl+Shift+F` | Search in the current terminal |
 | `Ctrl+C` / `Ctrl+V` | Copy when text is selected (otherwise sends the interrupt) / paste — text is pasted, an **image** in the clipboard is handed to the agent (Claude Code, Codex) |
 | Right click | Copy the selection, or paste if nothing is selected |

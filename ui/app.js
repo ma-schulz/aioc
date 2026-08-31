@@ -131,6 +131,7 @@
       }
       if (ev.ctrlKey && ev.shiftKey && (ev.key === 'F' || ev.key === 'N')) return false;
       if (ev.altKey && ev.shiftKey && (ev.key === 'D' || ev.key === 'd')) return false;
+      if (ev.altKey && !ev.ctrlKey && !ev.shiftKey && ev.key.startsWith('Arrow')) return false; // Pane-Fokus
       if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
       return true;
     });
@@ -216,6 +217,21 @@
     requestAnimationFrame(() => terms.get(id)?.term.focus());
     const s = sessionOf(id);
     if (s && s.unread) send({ t: 'markRead', id });
+  }
+
+  // Alt+Pfeil: Fokus zwischen den Panes bewegen (Raster: 1, 2 nebeneinander oder 2x2), wie im Windows Terminal
+  function moveFocus(dir) {
+    if (panes.length < 2) return;
+    const cols = panes.length === 4 ? 2 : panes.length;
+    const rows = panes.length === 4 ? 2 : 1;
+    let r = Math.floor(focused / cols), c = focused % cols;
+    if (dir === 'ArrowLeft') c--; else if (dir === 'ArrowRight') c++;
+    else if (dir === 'ArrowUp') r--; else if (dir === 'ArrowDown') r++;
+    if (c < 0 || c >= cols || r < 0 || r >= rows) return;
+    focused = r * cols + c;
+    renderAll();
+    const id = panes[focused].id;
+    if (id) requestAnimationFrame(() => terms.get(id)?.term.focus());
   }
 
   // 1 Pane -> 2 nebeneinander -> 2x2 -> zurück auf 1 (die fokussierte Session bleibt)
@@ -521,6 +537,7 @@
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); openNew(); return; }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); toggleSearch(); return; }
     if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleSplit(); return; }
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key.startsWith('Arrow')) { e.preventDefault(); moveFocus(e.key); return; }
     if (e.ctrlKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
       const b = document.querySelector(`.sess[data-n="${e.key}"]`);
       if (b) { e.preventDefault(); b.click(); }
