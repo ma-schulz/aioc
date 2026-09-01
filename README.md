@@ -60,6 +60,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | --- | --- |
 | `Ctrl+Shift+N` | New session |
 | `Ctrl+1 … 9` | Switch to the n-th session in the list |
+| `F2` / `Ctrl+Shift+R` | Rename the current session (Enter saves, Esc cancels) |
 | `Alt+Shift+D` | Split: one pane → two side by side → 2×2 → back to one |
 | `Alt+← → ↑ ↓` | Move focus between panes (like Windows Terminal) |
 | `Shift+Enter` | New line in the agent's prompt without submitting (Claude Code, Codex, Pi) |

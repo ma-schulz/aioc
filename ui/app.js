@@ -218,7 +218,8 @@
         if (term.hasSelection()) navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
         return false;
       }
-      if (ev.ctrlKey && ev.shiftKey && (ev.key === 'F' || ev.key === 'N')) return false;
+      if (ev.ctrlKey && ev.shiftKey && (ev.key === 'F' || ev.key === 'N' || ev.key === 'R')) return false;
+      if (ev.key === 'F2') return false; // Umbenennen
       if (ev.altKey && ev.shiftKey && (ev.key === 'D' || ev.key === 'd')) return false;
       if (ev.altKey && !ev.ctrlKey && !ev.shiftKey && ev.key.startsWith('Arrow')) return false; // Pane-Fokus
       if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
@@ -689,6 +690,13 @@
 
   // ---------- Globale Tasten ----------
   window.addEventListener('keydown', e => {
+    const ae = document.activeElement;
+    const inField = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !ae.classList.contains('xterm-helper-textarea');
+    if (!inField && (e.key === 'F2' || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'r'))) {
+      e.preventDefault();
+      if (activeId()) renamePrompt(activeId());
+      return;
+    }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); openNew(); return; }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); toggleSearch(); return; }
     if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleSplit(); return; }
