@@ -337,7 +337,17 @@
   const fitAll = () => requestAnimationFrame(() => panes.forEach((_, i) => fitPane(i)));
 
   function assignToPane(paneIdx, id) {
-    for (let i = 0; i < panes.length; i++) if (i !== paneIdx && panes[i].id === id) panes[i].id = null;
+    // Session ist schon in einem anderen Pane sichtbar: dorthin fokussieren statt sie zu verschieben
+    const shownIn = panes.findIndex(p => p.id === id);
+    if (shownIn >= 0 && shownIn !== paneIdx) {
+      focused = shownIn;
+      saveLayout();
+      renderAll();
+      requestAnimationFrame(() => terms.get(id)?.term.focus());
+      const s0 = sessionOf(id);
+      if (s0 && s0.unread) send({ t: 'markRead', id });
+      return;
+    }
     panes[paneIdx].id = id;
     focused = paneIdx;
     saveLayout();

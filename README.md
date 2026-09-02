@@ -59,7 +59,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | Key | Action |
 | --- | --- |
 | `Ctrl+Shift+N` | New session |
-| `Ctrl+1 … 9` | Switch to the n-th session in the list |
+| `Ctrl+1 … 9` | Switch to the n-th session in the list — loads it into the focused pane, or moves focus to the pane that already shows it |
 | `F2` / `Ctrl+Shift+R` | Rename the current session (Enter saves, Esc cancels) |
 | `Alt+Shift+D` | Split: one pane → two side by side → 2×2 → back to one |
 | `Alt+← → ↑ ↓` | Move focus between panes (like Windows Terminal) |
