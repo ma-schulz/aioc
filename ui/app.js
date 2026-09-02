@@ -210,10 +210,8 @@
         term.clearSelection();
         return false;
       }
-      if ((ev.ctrlKey && !ev.shiftKey && ev.key === 'v') || (ev.shiftKey && ev.key === 'Insert')) {
-        pasteInto(id);
-        return false;
-      }
+      // Ctrl+V / Shift+Insert: nicht selbst einfuegen - der Browser loest das native paste-Ereignis
+      // aus, das xterm.js (einmal, als Bracketed Paste) verarbeitet; Bilder faengt der paste-Listener.
       if (ev.ctrlKey && ev.shiftKey && ev.key === 'C') {
         if (term.hasSelection()) navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
         return false;
@@ -256,6 +254,16 @@
       e.preventDefault();
     }, { passive: false });
     wrap.addEventListener('touchend', () => { touchY = null; }, { passive: true });
+    // Natives Einfuegen: Text laesst xterm.js selbst einfuegen (genau einmal); steckt ein Bild in
+    // der Zwischenablage, uebernimmt Aioc (Agenten-Taste lokal bzw. Upload aus der Ferne).
+    wrap.addEventListener('paste', e => {
+      const items = [...(e.clipboardData?.items || [])];
+      const img = items.find(it => it.kind === 'file' && it.type.startsWith('image/'));
+      if (!img) return;
+      e.preventDefault();
+      e.stopPropagation();
+      pasteImage(id, img.getAsFile());
+    }, true);
     // Rechtsklick wie im Windows Terminal: Auswahl kopieren, sonst einfügen
     wrap.addEventListener('contextmenu', e => {
       e.preventDefault();
@@ -287,19 +295,23 @@
       try { text = await navigator.clipboard.readText(); } catch {}
     }
     const imgKey = s && IMAGE_KEY[s.agent];
-    if (imageBlob && imgKey) {
-      if (LOCAL_UI) { send({ t: 'input', id, d: imgKey }); return; }
-      const data = await new Promise(resolve => {
-        const fr = new FileReader();
-        fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
-        fr.onerror = () => resolve('');
-        fr.readAsDataURL(imageBlob);
-      });
-      if (data) send({ t: 'image', id, mime: imageBlob.type, data });
-      return;
-    }
+    if (imageBlob && imgKey) { pasteImage(id, imageBlob); return; }
     if (text) { t.term.paste(text); return; }
     if (imgKey && LOCAL_UI) send({ t: 'input', id, d: imgKey }); // kein Text lesbar: vermutlich ein Bild
+  }
+
+  async function pasteImage(id, blob) {
+    const s = sessionOf(id);
+    const imgKey = s && IMAGE_KEY[s.agent];
+    if (!imgKey || !blob) return;
+    if (LOCAL_UI) { send({ t: 'input', id, d: imgKey }); return; }
+    const data = await new Promise(resolve => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+      fr.onerror = () => resolve('');
+      fr.readAsDataURL(blob);
+    });
+    if (data) send({ t: 'image', id, mime: blob.type, data });
   }
 
   function dropTerm(id) {
