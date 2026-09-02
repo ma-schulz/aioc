@@ -210,8 +210,12 @@
         term.clearSelection();
         return false;
       }
-      // Ctrl+V / Shift+Insert: nicht selbst einfuegen - der Browser loest das native paste-Ereignis
-      // aus, das xterm.js (einmal, als Bracketed Paste) verarbeitet; Bilder faengt der paste-Listener.
+      // Ctrl+V / Shift+Insert: Text fuegt der Browser ueber das native paste-Ereignis ein (xterm,
+      // genau einmal). Parallel prueft Aioc die Zwischenablage auf ein Bild und reicht es weiter.
+      if ((ev.ctrlKey && !ev.shiftKey && ev.key === 'v') || (ev.shiftKey && ev.key === 'Insert')) {
+        checkClipboardImage(id);
+        return true;
+      }
       if (ev.ctrlKey && ev.shiftKey && ev.key === 'C') {
         if (term.hasSelection()) navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
         return false;
@@ -254,16 +258,6 @@
       e.preventDefault();
     }, { passive: false });
     wrap.addEventListener('touchend', () => { touchY = null; }, { passive: true });
-    // Natives Einfuegen: Text laesst xterm.js selbst einfuegen (genau einmal); steckt ein Bild in
-    // der Zwischenablage, uebernimmt Aioc (Agenten-Taste lokal bzw. Upload aus der Ferne).
-    wrap.addEventListener('paste', e => {
-      const items = [...(e.clipboardData?.items || [])];
-      const img = items.find(it => it.kind === 'file' && it.type.startsWith('image/'));
-      if (!img) return;
-      e.preventDefault();
-      e.stopPropagation();
-      pasteImage(id, img.getAsFile());
-    }, true);
     // Rechtsklick wie im Windows Terminal: Auswahl kopieren, sonst einfügen
     wrap.addEventListener('contextmenu', e => {
       e.preventDefault();
@@ -298,6 +292,17 @@
     if (imageBlob && imgKey) { pasteImage(id, imageBlob); return; }
     if (text) { t.term.paste(text); return; }
     if (imgKey && LOCAL_UI) send({ t: 'input', id, d: imgKey }); // kein Text lesbar: vermutlich ein Bild
+  }
+
+  // Bei Ctrl+V: liegt ein Bild in der Zwischenablage, an den Agenten geben (Text macht der Browser)
+  async function checkClipboardImage(id) {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const imgType = it.types.find(ty => ty.startsWith('image/'));
+        if (imgType) { pasteImage(id, await it.getType(imgType)); return; }
+      }
+    } catch { /* keine Berechtigung o. ae.: dann nur Text via natives Paste */ }
   }
 
   async function pasteImage(id, blob) {
