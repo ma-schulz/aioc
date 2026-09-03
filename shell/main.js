@@ -55,11 +55,26 @@ app.whenReady().then(async () => {
     clipboardPerms.has(permission) && isOwnUi(origin ? origin + '/' : wc?.getURL()));
 
   let url;
+  let pinFailure = null;
   if (remote) {
-    // Fernzugriff: selbst erzeugtes Zertifikat des Daemons wird über den Fingerprint im Link gepinnt
-    const fp = remote.searchParams.get('fp');
+    // Fernzugriff: selbst erzeugtes Zertifikat des Daemons wird über den Fingerprint im Link gepinnt.
+    // Neuer Linkstil: '#fp=<base64url>' (kein '&' im Link); alter Stil '&fp=<base64>' bleibt gültig.
+    let fp = (remote.hash.match(/^#fp=([A-Za-z0-9_-]+)/) || [])[1] || remote.searchParams.get('fp') || '';
+    if (fp && !fp.includes('/') && !fp.includes('+')) {
+      fp = fp.replace(/-/g, '+').replace(/_/g, '/');
+      while (fp.length % 4) fp += '=';
+    }
+    if (!fp) {
+      dialog.showErrorBox('Aioc', 'Der Verbindungslink enthält keinen Zertifikats-Fingerprint (fp).\nBitte den Link komplett und in Anführungszeichen übergeben:\naioc-remote.cmd "<Link>"');
+      app.quit();
+      return;
+    }
     session.defaultSession.setCertificateVerifyProc((request, callback) => {
-      const ok = request.hostname === remote.hostname && !!fp && request.certificate?.fingerprint === 'sha256/' + fp;
+      const seen = request.certificate?.fingerprint || '';
+      const ok = request.hostname === remote.hostname && seen === 'sha256/' + fp;
+      if (!ok) pinFailure = request.hostname !== remote.hostname
+        ? `Zertifikat für anderen Host (${request.hostname})`
+        : `Zertifikats-Fingerprint passt nicht.\n  Link:   ${fp}\n  Server: ${seen.replace(/^sha256\//, '')}\nAuf dem Daemon-Rechner den Link neu kopieren (LAN an → Link kopieren).`;
       callback(ok ? 0 : -2);
     });
     url = remoteUrl;
@@ -92,7 +107,13 @@ app.whenReady().then(async () => {
     if (input.type === 'keyDown' && input.key === 'F12') { win.webContents.toggleDevTools(); e.preventDefault(); }
   });
   win.webContents.on('did-fail-load', (e, code, desc) => {
-    if (remote) dialog.showErrorBox('Aioc', `Verbindung zu ${remote.host} fehlgeschlagen: ${desc} (${code}).\nStimmt der Link (Token, Fingerprint), ist LAN-Zugriff an, lässt die Firewall den Port durch?`);
+    if (!remote) return;
+    const why = pinFailure
+      ? pinFailure
+      : code === -102 ? 'Verbindung abgelehnt – ist LAN-Zugriff auf dem Daemon-Rechner eingeschaltet?'
+      : code === -118 || code === -7 ? 'Zeitüberschreitung – Firewall/VPN-Route zum Port prüfen.'
+      : 'Stimmt der Link (Token, Fingerprint), ist LAN-Zugriff an, lässt die Firewall den Port durch?';
+    dialog.showErrorBox('Aioc', `Verbindung zu ${remote.host} fehlgeschlagen: ${desc} (${code}).\n${why}`);
   });
   win.loadURL(url);
 });

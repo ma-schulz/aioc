@@ -103,7 +103,7 @@ The window is only a client, so it can run somewhere else — a laptop, a tablet
 
 1. On the daemon machine click **LAN an** in the title bar. Aioc generates a self-signed certificate once (`%USERPROFILE%\.aioc\tls\`) and opens a second listener: **HTTPS/WSS on port 43443**, bound to all interfaces. The switch is persistent; `node daemon/lan.js on|off|status` does the same from the command line.
 2. Allow the port in Windows Firewall once (as administrator): `netsh advfirewall firewall add rule name="Aioc LAN" dir=in action=allow protocol=TCP localport=43443`
-3. Click **Link kopieren**. The link carries the access token and the certificate fingerprint, e.g. `https://192.168.1.10:43443/?token=…&fp=…`.
+3. Click **Link kopieren**. The link carries the access token and the certificate fingerprint, e.g. `https://192.168.1.10:43443/?token=…#fp=…` (no `&` or `%`, so it survives an unquoted command line).
 4. On the other device:
    - **Phone / tablet:** click **QR fürs Handy**, scan the code (same Wi-Fi), accept the self-signed certificate once, and use *Add to Home Screen* — Aioc ships a PWA manifest whose start URL carries the token, so the installed app opens straight into your sessions. On narrow screens Aioc shows the session list first; tapping a session opens its terminal full-screen, **‹ Liste** goes back.
    - **Second PC with this repo:** `aioc-remote.cmd "<link>"` opens an Aioc window that pins the daemon's certificate to the fingerprint from the link — no certificate warning, and any other certificate is rejected.
