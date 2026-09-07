@@ -2,7 +2,7 @@
 // needed; with a connection link as argument it opens a remote daemon (HTTPS/WSS) and pins the
 // certificate to the fingerprint in the link instead of showing a certificate warning.
 // Closing the window never touches the daemon or its sessions.
-const { app, BrowserWindow, Menu, session, dialog } = require('electron');
+const { app, BrowserWindow, Menu, session, dialog, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -16,6 +16,13 @@ app.setPath('userData', path.join(AIOC_HOME, 'electron'));
 
 const remoteUrl = process.argv.slice(1).find(a => /^https?:\/\//i.test(a)) || null;
 const remote = remoteUrl ? new URL(remoteUrl) : null;
+
+// Links aus dem Terminal im Standardbrowser des Rechners oeffnen (Chrome & Co. haben die Logins,
+// ein zweites Electron-Fenster nicht). Nur http(s)/mailto: - xterm reicht OSC-8-Ziele ungeprueft
+// durch, shell.openExternal wuerde sonst auch beliebige Protokoll-Handler starten.
+ipcMain.on('aioc-open-external', (_e, url) => {
+  if (typeof url === 'string' && /^(https?|mailto):/i.test(url)) shell.openExternal(url);
+});
 
 function readInfo() {
   try { return JSON.parse(fs.readFileSync(INFO_FILE, 'utf8')); } catch { return null; }
@@ -95,8 +102,15 @@ app.whenReady().then(async () => {
     width: bounds?.width || 1500, height: bounds?.height || 950,
     x: bounds?.x, y: bounds?.y, minWidth: 900, minHeight: 500,
     backgroundColor: '#0C0C0C', autoHideMenuBar: true, title: remote ? `Aioc – ${remote.hostname}` : 'Aioc',
+    webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
   if (bounds?.maximized) win.maximize();
+  // Sicherheitsnetz: falls doch ein window.open aus dem Renderer durchgeht, nie ein zweites
+  // Electron-Fenster oeffnen, sondern die URL extern (Standardbrowser) aufmachen.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?|mailto):/i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
   win.on('close', () => {
     try {
       const b = win.isMaximized() ? { ...(bounds || {}), maximized: true } : { ...win.getBounds(), maximized: false };

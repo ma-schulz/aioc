@@ -39,6 +39,24 @@
   const LOCAL_UI = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
   const WS_SCHEME = location.protocol === 'https:' ? 'wss' : 'ws';
 
+  // Links im Standardbrowser des Rechners oeffnen (dort sind die Logins, nicht im Electron-Fenster).
+  // Browser-/PWA-Fenster machen einen neuen Tab; im Electron-Fenster stellt die Preload-Bruecke
+  // (shell/preload.js) window.aioc.openExternal bereit.
+  const openExternal = uri => {
+    if (window.aioc?.openExternal) window.aioc.openExternal(uri);
+    else window.open(uri, '_blank');
+  };
+  // xterm.js oeffnet OSC-8-Links selbst ueber window.open() + location.href - im Electron-Fenster
+  // waere das ein zweites Aioc-Fenster ohne Cookies. window.open wird deshalb ersetzt: direkte
+  // URLs gehen extern auf, und das zurueckgegebene Pseudo-Fenster leitet auch location.href um.
+  if (window.aioc?.openExternal) {
+    const fakeLocation = new Proxy({}, { set: (t, p, v) => { if (p === 'href' && typeof v === 'string') openExternal(v); return true; } });
+    window.open = url => {
+      if (typeof url === 'string' && url) openExternal(url);
+      return { location: fakeLocation, opener: null, closed: true, close() {}, focus() {} };
+    };
+  }
+
   let ws = null, wsOk = false;
   let sessions = [], feed = [], recents = [], lan = { enabled: false, links: [] };
   let background = { url: null, opacity: 0.35 };
@@ -200,7 +218,7 @@
     const search = new SearchAddon.SearchAddon();
     term.loadAddon(fit);
     term.loadAddon(search);
-    term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => window.open(uri, '_blank')));
+    term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => openExternal(uri)));
     try { term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = '11'; } catch {}
     term.open(wrap);
     try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
