@@ -63,7 +63,7 @@
       focused = Math.min(lay.focused || 0, panes.length - 1);
     } catch {}
   }
-  let filter = 'all', pendingSelectNew = false;
+  let filter = 'all', pendingSelectNew = false, focusedOnce = false;
   let panes = [{ id: null }], focused = 0;
   const terms = new Map(); // id -> {term, fit, search, wrap, attached}
 
@@ -103,6 +103,7 @@
           const newest = [...sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
           pendingSelectNew = false;
           panes[focused].id = newest.id;
+          requestAnimationFrame(() => terms.get(newest.id)?.term.focus());
         }
         if (m.t === 'hello') restoreLayout();
         for (const p of panes) if (p.id && !sessionOf(p.id)) p.id = null;
@@ -110,6 +111,12 @@
         // Geteilt gestartet (?split=…) und noch leer: die ersten Sessions auf die Panes verteilen
         if (m.t === 'hello' && panes.length > 1 && panes.every(p => !p.id)) {
           sessions.slice(0, panes.length).forEach((s, i) => { panes[i].id = s.id; });
+        }
+        // Erster Verbindungsaufbau: Tastaturfokus ins aktive Terminal, sonst wirken Tippen und
+        // Strg+V erst nach einem Klick ins Terminal (Start, neue Session, Wiederherstellen).
+        if (m.t === 'hello' && !focusedOnce) {
+          focusedOnce = true;
+          if (!MOBILE.matches) requestAnimationFrame(() => { const id = activeId(); if (id) terms.get(id)?.term.focus(); });
         }
         renderAll();
         for (const p of panes) if (p.id) ensureAttached(p.id);
@@ -210,11 +217,16 @@
         term.clearSelection();
         return false;
       }
-      // Ctrl+V / Shift+Insert: Text fuegt der Browser ueber das native paste-Ereignis ein (xterm,
-      // genau einmal). Parallel prueft Aioc die Zwischenablage auf ein Bild und reicht es weiter.
+      // Ctrl+V / Shift+Insert: return false ist Pflicht - bei true wuerde xterm die Taste zum
+      // Steuerzeichen 0x16 (Ctrl+V) an das PTY schicken UND preventDefault() aufrufen, womit das
+      // native paste-Ereignis des Browsers nie feuert und der Text der Zwischenablage verloren geht
+      // (bei manchen Agenten loest 0x16 zusaetzlich noch deren Bild-Einfuegen aus). false laesst
+      // xterm die Taste unangetastet: der Browser loest das native paste-Ereignis auf der
+      // xterm-Textarea aus, xterm fuegt den Text einmal als Bracketed Paste ein. Parallel prueft
+      // Aioc die Zwischenablage auf ein Bild und reicht es an den Agenten weiter.
       if ((ev.ctrlKey && !ev.shiftKey && ev.key === 'v') || (ev.shiftKey && ev.key === 'Insert')) {
         checkClipboardImage(id);
-        return true;
+        return false;
       }
       if (ev.ctrlKey && ev.shiftKey && ev.key === 'C') {
         if (term.hasSelection()) navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
@@ -716,6 +728,16 @@
   });
 
   // ---------- Globale Tasten ----------
+  // Klicks auf Bedienelemente (Sidebar, Kopfzeilen, Chips, Einstellungen) nehmen den Tastaturfokus
+  // von der xterm-Textarea weg; danach landen Tippen und Strg+V im Nirgendwo. Jeder Klick gibt
+  // den Fokus ans aktive Terminal zurueck - ausser in offene Eingabefelder und modale Dialoge.
+  document.addEventListener('click', () => {
+    if (MOBILE.matches || document.querySelector('dialog[open]')) return;
+    const ae = document.activeElement;
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !ae.classList.contains('xterm-helper-textarea')) return;
+    const id = activeId();
+    if (id) terms.get(id)?.term.focus();
+  });
   window.addEventListener('keydown', e => {
     const ae = document.activeElement;
     const inField = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !ae.classList.contains('xterm-helper-textarea');

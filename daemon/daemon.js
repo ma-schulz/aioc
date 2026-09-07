@@ -56,7 +56,9 @@ function backgroundState() {
   const ui = state.loadUiState();
   let v = 0;
   try { v = f ? Math.floor(fs.statSync(f).mtimeMs) : 0; } catch {}
-  return { url: f ? `/background?v=${v}` : null, opacity: typeof ui.backgroundOpacity === 'number' ? ui.backgroundOpacity : 0.35 };
+  // Token im Query: /background ist das einzige private Gut unter den statischen Routen - ohne
+  // Token waere es im LAN fuer jedermann abrufbar (die WS-Anmeldung verlangt dagegen ein Token).
+  return { url: f ? `/background?v=${v}&token=${encodeURIComponent(info.token)}` : null, opacity: typeof ui.backgroundOpacity === 'number' ? ui.backgroundOpacity : 0.35 };
 }
 function setBackground(buf, mime) {
   const ext = BG_EXTS[mime];
@@ -163,6 +165,7 @@ function handleRequest(req, res) {
     return;
   }
   if (url.pathname === '/background' && req.method === 'GET') {
+    if (req.socket.encrypted && url.searchParams.get('token') !== info.token) { res.writeHead(403); res.end(); return; }
     const f = backgroundFile();
     if (!f) { res.writeHead(404); res.end(); return; }
     fs.readFile(f, (err, data) => {
