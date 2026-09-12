@@ -45,7 +45,7 @@ const STATIC = {
 
 const wss = new WebSocketServer({ noServer: true });
 let lanServer = null;
-let lanFp = null;
+let lanCert = null; // { fp, host, trusted } des Zertifikats, mit dem der LAN-Listener laeuft
 
 // ---- Hintergrundbild (liegt beim Daemon, damit auch ferne Fenster es sehen) -----------------
 const BG_EXTS = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
@@ -131,7 +131,11 @@ function recomputeSize(id) {
 
 let lanQr = null; // SVG-QR-Code des ersten Verbindungslinks (fuers Handy)
 function lanState() {
-  return { enabled: !!lanServer, port: info.lanPort, fp: lanFp, links: lanServer ? lanLinks(info, lanFp) : [], qr: lanServer ? lanQr : null };
+  return {
+    enabled: !!lanServer, port: info.lanPort, fp: lanCert?.fp || null,
+    host: lanCert?.host || null, trusted: !!lanCert?.trusted,
+    links: lanServer ? lanLinks(info, lanCert) : [], qr: lanServer ? lanQr : null,
+  };
 }
 
 function stateMsg(t) {
@@ -274,7 +278,8 @@ wss.on('connection', ws => {
 // ---- LAN: zweiter Listener mit HTTPS/WSS auf 0.0.0.0:lanPort ----------------------------------
 async function startLan() {
   if (lanServer) return;
-  const { key, cert, fp } = await tlsUtil.ensureCert();
+  const certInfo = await tlsUtil.ensureCert();
+  const { key, cert } = certInfo;
   const server = https.createServer({ key, cert }, handleRequest);
   server.on('upgrade', handleUpgrade);
   await new Promise((resolve, reject) => {
@@ -282,15 +287,15 @@ async function startLan() {
     server.listen(info.lanPort, '0.0.0.0', resolve);
   });
   lanServer = server;
-  lanFp = fp;
+  lanCert = certInfo;
   info.lan = true;
   persistInfo();
   try {
-    const first = lanLinks(info, fp)[0];
+    const first = lanLinks(info, certInfo)[0];
     lanQr = first ? await require('qrcode').toString(first, { type: 'svg', margin: 1, color: { dark: '#000000', light: '#ffffff' } }) : null;
   } catch { lanQr = null; }
-  mgr.pushFeed(`LAN-Zugriff EIN · HTTPS-Port ${info.lanPort} · Firewall muss node.exe eingehend erlauben`);
-  console.log(`[aioc] LAN-Listener auf https://0.0.0.0:${info.lanPort} (Fingerprint ${fp})`);
+  mgr.pushFeed(`LAN-Zugriff EIN · HTTPS-Port ${info.lanPort}${certInfo.trusted ? ` · Zertifikat für ${certInfo.host}` : ''} · Firewall muss node.exe eingehend erlauben`);
+  console.log(`[aioc] LAN-Listener auf https://0.0.0.0:${info.lanPort} (${certInfo.trusted ? 'vertrauenswürdiges Zertifikat für ' + certInfo.host : 'Fingerprint ' + certInfo.fp})`);
   broadcastSessions();
 }
 
@@ -299,7 +304,7 @@ function stopLan() {
   for (const ws of wss.clients) if (ws.viaLan) { try { ws.close(); } catch {} }
   lanServer.close();
   lanServer = null;
-  lanFp = null;
+  lanCert = null;
   info.lan = false;
   persistInfo();
   mgr.pushFeed('LAN-Zugriff AUS');

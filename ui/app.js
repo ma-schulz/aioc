@@ -803,13 +803,18 @@
       b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
       b.querySelector('.ag').textContent = s.agent;
       const st = b.querySelector('.st');
-      st.title = s.detail || '';
+      st.title = `${s.cwd}\n${s.detail || ''}`;
+      // Je Zeile sichtbar, in welchem Worktree der Agent sitzt und wie es dort steht. In der
+      // Statussortierung fehlt der Ordnerkopf, dort steht der Worktree-Name zusätzlich davor.
       if (sortMode === 'status') {
-        // flache Statusliste ohne Ordnerköpfe: der Branch steht vor dem Detail
-        const br = document.createElement('span');
-        br.className = 'br';
-        if (fillGit(br, s.git)) st.append(br, ' · ');
+        const wt = document.createElement('span');
+        wt.className = 'wt';
+        wt.textContent = folderName(s.cwd);
+        st.append(wt, ' ');
       }
+      const br = document.createElement('span');
+      br.className = 'br';
+      if (fillGit(br, s.git)) st.append(br, ' · ');
       st.append(s.detail || '');
       b.addEventListener('click', () => { if (Date.now() >= suppressClick) assignToPane(focused, s.id); });
       b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(s.id); });
@@ -834,6 +839,9 @@
     renderLan();
     $('recents').innerHTML = recents.map(r => `<option value="${r.replaceAll('"', '&quot;')}">`).join('');
   }
+
+  // Letzter Pfadteil - bei Worktrees genau deren Name (z. B. "7139_welle8_portale")
+  const folderName = cwd => String(cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || String(cwd || '');
 
   // Branch + Arbeitsstand kompakt, z. B. "⎇ master ±3 ↑1 ↓2" - reine Anzeige, Aioc fasst Repos nicht an
   function fillGit(span, g) {

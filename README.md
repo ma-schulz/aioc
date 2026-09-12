@@ -78,6 +78,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - Click a pane to focus it; the sidebar always loads sessions into the focused pane.
 - Click a folder heading to collapse the group. Collapsed groups show `?` (waiting) and `●` (unread) as a hint.
 - The `⇅` switch sorts by folder (grouped) or by status (waiting first, flat).
+- Every row carries the state of its own worktree (`⎇ master ±3 ↑1`), so you can see at a glance what each agent is sitting on. Sorted by status the row also names the worktree folder, since there are no folder headings there.
 - Drag a session by its `⠿` handle (or anywhere in the row, with the mouse) to reorder it inside its folder group — the folder belongs to the session, so it stays in its group. The order lives in the daemon, so every window and every device shows the same one. Sorting by status is by status, so dragging is off there.
 - Drag the divider to resize the sidebar; double-click resets it. The same works for the dividers between panes — double-click puts them back to half and half.
 - Each pane header carries its own buttons: **◧** split right, **⬒** split down, **⤢** zoom, **✕** close the pane.
@@ -154,10 +155,23 @@ The window is only a client, so it can run somewhere else — a laptop, a tablet
 2. Allow the port in Windows Firewall once (as administrator): `netsh advfirewall firewall add rule name="Aioc LAN" dir=in action=allow protocol=TCP localport=43443`
 3. Click **Link kopieren**. The link carries the access token and the certificate fingerprint, e.g. `https://192.168.1.10:43443/?token=…#fp=…` (no `&` or `%`, so it survives an unquoted command line).
 4. On the other device:
-   - **Phone / tablet:** click **QR fürs Handy**, scan the code (same Wi-Fi), accept the self-signed certificate once, and use *Add to Home Screen* — Aioc ships a PWA manifest whose start URL carries the token, so the installed app opens straight into your sessions. On narrow screens Aioc shows the session list first; tapping a session opens its terminal full-screen, **‹ Liste** goes back.
+   - **Phone / tablet:** click **QR fürs Handy**, scan the code (same Wi-Fi), accept the self-signed certificate once, and use *Add to Home Screen* (works on iOS; Chrome on Android refuses to *install* an app over a self-signed certificate — see [A trusted certificate](#a-trusted-certificate-tailscale)) — Aioc ships a PWA manifest whose start URL carries the token, so the installed app opens straight into your sessions. On narrow screens Aioc shows the session list first; tapping a session opens its terminal full-screen, **‹ Liste** goes back.
    - **Second PC with this repo:** `aioc-remote.cmd "<link>"` opens an Aioc window that pins the daemon's certificate to the fingerprint from the link — no certificate warning, and any other certificate is rejected.
 
 Pasting an image from a remote window works too: the image travels over the WebSocket to the daemon, is placed in the clipboard of the daemon machine and handed to the agent there — the same path a local `Ctrl+V` takes. **LAN aus** closes the listener and drops remote clients; local use continues untouched.
+
+### A trusted certificate (Tailscale)
+
+The generated certificate is fine for the desktop window, which pins it — but not for Chrome on Android: over an untrusted certificate no service worker registers, and without one the PWA cannot be installed. If you run [Tailscale](https://tailscale.com), drop a real certificate next to the generated one (enable *HTTPS Certificates* in the tailnet's DNS settings first):
+
+```powershell
+cd $env:USERPROFILE\.aioc\tls
+tailscale cert <machine>.<tailnet>.ts.net
+```
+
+Aioc picks up any `<name>.crt` + `<name>.key` pair in that folder, runs the LAN listener with it and hands out `https://<name>:43443/?token=…` — no fingerprint, no pinning, and `aioc-remote.cmd` simply validates it the normal way. Such certificates last about 90 days; run `tailscale cert` again and switch LAN off and on.
+
+Do **not** use `tailscale serve` for this: requests from the tailnet would then reach the daemon as `127.0.0.1`, which is exactly what the hook endpoint and the control API treat as *local and therefore allowed*.
 
 ### Several windows at once
 

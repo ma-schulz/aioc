@@ -8,9 +8,12 @@ function rank(ip) { return ip.startsWith('192.168.') ? 0 : ip.startsWith('10.') 
 
 // Link ohne '&' und '%': der Fingerprint steht URL-sicher (base64url) im Fragment, damit der Link
 // auch unquotiert in cmd/PowerShell heil bleibt ('&' wuerde ihn sonst zerschneiden).
-function lanLinks(info, fp) {
+function lanLinks(info, cert) {
   const port = info.lanPort || 43443;
-  const fpUrl = fp.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  // Oeffentlich vertrauenswuerdiges Zertifikat (z. B. von Tailscale): der Name traegt sich selbst,
+  // kein Fingerprint noetig - und nur so gilt die Seite als sicher (Voraussetzung fuer die PWA).
+  if (cert && cert.trusted && cert.host) return [`https://${cert.host}:${port}/?token=${info.token}`];
+  const fpUrl = String(cert && cert.fp ? cert.fp : cert || '').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   return lanAddresses()
     .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
     .map(ip => `https://${ip}:${port}/?token=${info.token}#fp=${fpUrl}`);

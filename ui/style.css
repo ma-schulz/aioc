@@ -47,6 +47,8 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .grp .badge { flex: none; color: var(--yellow); text-transform: none; letter-spacing: 0; }
 /* Branch + Arbeitsstand (nur Anzeige) */
 .br { font-family: var(--mono); font-size: 11px; white-space: nowrap; text-transform: none; letter-spacing: 0; }
+/* Worktree-Name in der Statussortierung (dort fehlt der Ordnerkopf) */
+.sess .st .wt { font-family: var(--mono); font-size: 11px; color: var(--fg); }
 .br .bn { color: #3A96DD; }
 .br .bm { color: var(--fg); }
 .br .bm.conflict { color: var(--red); }

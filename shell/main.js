@@ -86,12 +86,10 @@ app.whenReady().then(async () => {
       fp = fp.replace(/-/g, '+').replace(/_/g, '/');
       while (fp.length % 4) fp += '=';
     }
-    if (!fp) {
-      dialog.showErrorBox('Aioc', 'Der Verbindungslink enthält keinen Zertifikats-Fingerprint (fp).\nBitte den Link komplett und in Anführungszeichen übergeben:\naioc-remote.cmd "<Link>"');
-      app.quit();
-      return;
-    }
-    session.defaultSession.setCertificateVerifyProc((request, callback) => {
+    // Kein Fingerprint im Link: dann laeuft der Daemon mit einem oeffentlich vertrauenswuerdigen
+    // Zertifikat (z. B. von Tailscale) und Chromium prueft ganz normal. Nur das selbst erzeugte
+    // Zertifikat muss gepinnt werden.
+    if (fp) session.defaultSession.setCertificateVerifyProc((request, callback) => {
       const seen = request.certificate?.fingerprint || '';
       const ok = request.hostname === remote.hostname && seen === 'sha256/' + fp;
       if (!ok) pinFailure = request.hostname !== remote.hostname
