@@ -9,11 +9,70 @@ const { Terminal } = require('@xterm/headless');
 const { SerializeAddon } = require('@xterm/addon-serialize');
 const state = require('./state');
 const agents = require('./agents');
+const claudeMeta = require('./claude-meta');
 
 const OSC_TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // Taste, mit der der Agent ein Bild aus der System-Zwischenablage holt (verifiziert 31.08.2026)
 const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', pi: '\x16' };
 const CLIP_SCRIPT = path.join(__dirname, 'set-clipboard-image.ps1');
+// Tasten fuer die Steuer-API (aioc-ctl key)
+const KEYS = {
+  enter: '\r', esc: '\x1b', escape: '\x1b', tab: '\t', 'shift+tab': '\x1b[Z', space: ' ', backspace: '\x7f',
+  up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D',
+  home: '\x1b[H', end: '\x1b[F', pgup: '\x1b[5~', pgdn: '\x1b[6~', delete: '\x1b[3~',
+};
+// Umbenennen zurueck in den Agenten schreiben: Claude Code und Codex koennen das per Slash-Befehl
+const RENAME_COMMAND = { claude: '/rename', codex: '/rename' };
+const apiError = (status, message) => Object.assign(new Error(message), { status });
+
+// Tastenname -> Sequenz; Pfeile im Application-Cursor-Modus (DECCKM) als ESC O x
+function keySequence(name, appCursor) {
+  const k = String(name).toLowerCase();
+  if (KEYS[k] !== undefined) return appCursor && /^(up|down|right|left)$/.test(k) ? '\x1bO' + KEYS[k].slice(2) : KEYS[k];
+  const ctrl = k.match(/^ctrl\+([a-z])$/);
+  if (ctrl) return String.fromCharCode(ctrl[1].charCodeAt(0) - 96);
+  if ([...String(name)].length === 1) return String(name);
+  return null;
+}
+
+// Puffer eines (headless) Terminals als Text ohne Farben/Steuersequenzen: umgebrochene Zeilen
+// werden wieder zusammengesetzt, Leerzeilen am Ende entfallen. lines = 0: alles.
+function bufferText(term, lines) {
+  const buf = term.buffer.active;
+  const out = [];
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    if (!line) continue;
+    const text = line.translateToString(!buf.getLine(i + 1)?.isWrapped);
+    if (line.isWrapped && out.length) out[out.length - 1] += text;
+    else out.push(text);
+  }
+  while (out.length && !out[out.length - 1].trim()) out.pop();
+  return (lines > 0 ? out.slice(-lines) : out).join('\n');
+}
+
+// Spinner- und Statuszeichen am Anfang des Terminaltitels (Claude: "✳ Name", "◐ Name"; Codex: "[ ! ] …")
+const TITLE_PREFIX = /^(?:[\s*·•…⏺✳✻✽◐◑◒◓◜◝◞◟⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]|\[\s*!\s*\])+/u;
+// Titel, die keinen Sessionnamen tragen, sondern nur das Programm oder einen Hinweis nennen
+const TITLE_GENERIC = [/^claude( code)?$/i, /^codex$/i, /^pi$/i, /^action required$/i, /^pwsh(\.exe)?$/i, /^powershell$/i];
+
+const folderOf = cwd => String(cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+const defaultName = entry => `${entry.agent} · ${folderOf(entry.cwd)}`;
+
+// Namensvorschlag aus dem Terminaltitel: Claude schreibt dort seinen Sessionnamen - nach /rename den
+// von dir gesetzten, sonst seinen selbst erzeugten Titel. Codex schreibt nur den Ordner, pwsh einen
+// Pfad; beides taugt nicht als Name.
+function nameFromTitle(entry) {
+  if (entry.agent === 'pwsh') return null;
+  let raw = String(entry.title || '').replace(TITLE_PREFIX, '').trim();
+  // Codex haengt den Ordner an: "Codex-Blau | aioc" (ohne eigenen Namen steht dort nur "aioc")
+  if (entry.agent === 'codex') raw = raw.split('|')[0].trim();
+  if (!raw || raw.length > 80) return null;
+  if (TITLE_GENERIC.some(re => re.test(raw))) return null;
+  if (/[\\/]|^[A-Za-z]:/.test(raw)) return null;
+  if (raw.toLowerCase() === folderOf(entry.cwd).toLowerCase()) return null;
+  return raw;
+}
 
 class Session {
   constructor(mgr, entry) {
@@ -28,6 +87,14 @@ class Session {
     this.saveTimer = null;
     this.heurTimer = null;
     this.pendingRestoredBanner = false;
+    this.lastAnswer = null; // letzte Agenten-Antwort aus dem Stop-Hook (aioc-ctl read --answer)
+    this.pendingTurn = null; // 'run' | 'change': Eingabe per API, Reaktion des Agenten steht noch aus
+    this.lastTitleName = null; // zuletzt aus dem Titel gelesener Name (Spinner-Wechsel ignorieren)
+    this.nameRetryTimer = null;
+    this.pendingNameWrite = null; // F2-Name, der noch in den Agenten getippt werden muss
+    this.nameWriteTimer = null;
+    this.spawnedAt = 0;
+    this.pendingTimer = null;
   }
 
   ensureTerm() {
@@ -63,6 +130,7 @@ class Session {
       return;
     }
     this.entry.exitedAt = null;
+    this.spawnedAt = Date.now();
     this.setStatus('starting', 'startet…', 'system');
     this.proc.onData(d => this.onData(d));
     this.proc.onExit(e => this.onExit(e));
@@ -84,6 +152,7 @@ class Session {
     while ((m = OSC_TITLE.exec(this.titleBuf))) last = m[1];
     if (last === null || last === this.entry.title) return;
     this.entry.title = last;
+    this.syncName();
     // Codex signals approval/input overlays only via the terminal title ("Action Required").
     if (this.entry.agent === 'codex') {
       if (/Action Required/i.test(last)) this.setStatus('waiting', 'Freigabe/Eingabe im Overlay', 'title');
@@ -92,6 +161,43 @@ class Session {
     } else {
       this.mgr.persistAndBroadcast();
     }
+  }
+
+  // Namen dem Agenten nachziehen. Ein in Aioc vergebener Name bleibt stehen - nur ein neuerer, im
+  // Agenten selbst gesetzter Name setzt sich darueber hinweg (Claude-Registry: nameSource 'user',
+  // gegen 'derived' fuer Claudes eigene Zusammenfassung).
+  syncName() {
+    const cand = nameFromTitle(this.entry);
+    if (!cand || cand === this.lastTitleName) return; // reiner Spinner-Wechsel: Text unveraendert
+    this.lastTitleName = cand;
+    clearTimeout(this.nameRetryTimer);
+    this.applyName(cand, 2);
+  }
+
+  // Claude schreibt Titel und Registry nicht im selben Moment (gemessen: Registry ~ms spaeter).
+  // Deshalb wird kurz nachgefasst - sonst bliebe ein /rename gegenueber einem in Aioc vergebenen
+  // Namen liegen, und ein uebernommener Name behielte faelschlich die Einstufung "automatisch".
+  applyName(cand, retries) {
+    if (nameFromTitle(this.entry) !== cand) return; // Titel ist inzwischen weitergezogen
+    const meta = this.entry.agent === 'claude' ? claudeMeta.lookup(this.entry.agentSessionId, { fresh: retries < 2 }) : null;
+    // Codex schreibt nur dann einen Namen in den Titel, wenn die Unterhaltung umbenannt wurde (sonst
+    // steht dort der Ordner) - dort ist jeder Titelname also von dir. Bei Claude beweist das die Registry.
+    const since = this.entry.agent === 'codex' ? Date.now()
+      : meta && meta.nameSource === 'user' && meta.name === cand ? meta.nameSince : null;
+    const byUser = since !== null;
+    const retry = () => {
+      if (retries > 0) this.nameRetryTimer = setTimeout(() => this.applyName(cand, retries - 1), 1500);
+    };
+    if (this.entry.nameSource === 'user' && !(byUser && since > (this.entry.nameAt || 0))) { retry(); return; }
+    if (this.entry.name !== cand) {
+      const before = this.entry.name;
+      this.entry.name = cand;
+      this.mgr.pushFeed(`${before} · heißt jetzt „${cand}"`);
+    }
+    this.entry.nameSource = byUser ? 'user' : 'auto';
+    this.entry.nameAt = byUser ? since : 0;
+    this.mgr.persistAndBroadcast();
+    if (!byUser) retry(); // die Registry kann den /rename noch nachreichen
   }
 
   heuristic() {
@@ -106,6 +212,8 @@ class Session {
 
   onExit(e) {
     this.proc = null;
+    this.pendingNameWrite = null;
+    clearTimeout(this.nameWriteTimer);
     clearTimeout(this.heurTimer);
     this.entry.exitedAt = Date.now();
     this.setStatus('exited', `Prozess beendet (Exit ${e.exitCode})`, 'system');
@@ -125,6 +233,7 @@ class Session {
         break;
       case 'UserPromptSubmit':
         this.entry.unread = false;
+        this.lastAnswer = null;
         this.setStatus('running', 'arbeitet', 'hook');
         break;
       case 'PreToolUse':
@@ -168,7 +277,10 @@ class Session {
       case 'Stop': {
         let detail = 'fertig';
         const last = payload.last_assistant_message;
-        if (typeof last === 'string' && last.trim()) detail = 'fertig: ' + last.trim().split('\n')[0].slice(0, 100);
+        if (typeof last === 'string' && last.trim()) {
+          detail = 'fertig: ' + last.trim().split('\n')[0].slice(0, 100);
+          this.lastAnswer = last.slice(0, 200000);
+        }
         this.entry.unread = true;
         this.setStatus('done', detail, 'hook');
         break;
@@ -186,14 +298,115 @@ class Session {
     this.entry.status = status;
     this.entry.detail = detail;
     this.entry.statusSource = source;
+    // Laufende Nummer je Wechsel: `aioc-ctl wait` erkennt daran Wechsel NACH einem Prompt
+    if (changed) this.entry.statusSeq = (this.entry.statusSeq || 0) + 1;
+    if (this.pendingTurn && (status === 'running' || status === 'exited' || (changed && this.pendingTurn === 'change'))) {
+      this.pendingTurn = null;
+      clearTimeout(this.pendingTimer);
+    }
+    // Wartende F2-Umbenennung nachreichen, sobald die Session zur Ruhe gekommen ist
+    if (this.pendingNameWrite && (status === 'idle' || status === 'done')) setTimeout(() => this.flushNameWrite(), 300);
     if (changed && (status === 'waiting' || status === 'done' || status === 'exited')) {
       this.mgr.pushFeed(`${this.entry.name} · ${detail}`);
     }
     this.mgr.persistAndBroadcast();
+    if (changed) this.mgr.emitStatus(this.entry);
   }
 
   // ---- io -------------------------------------------------------------------------------
   write(d) { if (this.proc) this.proc.write(d); }
+
+  // Text wie getippt ins Terminal: als Einfuegung, wenn der Agent Bracketed Paste aktiviert hat -
+  // sonst wuerden Zeilenumbrueche vorzeitig absenden.
+  typeText(text) {
+    const t = String(text).replace(/\r\n?/g, '\n').replace(/\x1b\[20[01]~/g, '');
+    if (t) this.write(this.term?.modes?.bracketedPasteMode ? `\x1b[200~${t}\x1b[201~` : t.replace(/\n/g, '\r'));
+    return t;
+  }
+
+  // Enter getrennt und leicht verzoegert - zusammen mit dem Text wertet Claude Code beides als Einfuegung
+  pressEnter(t = '') {
+    setTimeout(() => this.write('\r'), t ? Math.min(1000, 150 + t.length / 20) : 0);
+  }
+
+  sendPrompt(text, { enter = true } = {}) {
+    if (!this.proc) throw apiError(409, `${this.entry.name} läuft nicht (beendet oder vor Neustart)`);
+    const t = this.typeText(text);
+    if (!enter) return;
+    this.pressEnter(t);
+    this.markPending('run');
+  }
+
+  // Umbenennen in Aioc auch im Agenten setzen (Claude Code und Codex: `/rename <Name>`). Getippt
+  // wird nur, wenn die Session gerade nichts tut - waehrend eines Turns oder bei offener Rueckfrage
+  // landete die Zeile sonst als Nachricht oder im Dialog. Sonst wird sie nachgereicht (setStatus).
+  renameInAgent(name) {
+    if (!RENAME_COMMAND[this.entry.agent] || !this.proc) return;
+    const line = String(name).replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
+    if (!line) return;
+    this.pendingNameWrite = line;
+    this.flushNameWrite();
+  }
+
+  flushNameWrite() {
+    const line = this.pendingNameWrite;
+    if (!line || !this.proc) return;
+    const st = this.entry.status;
+    if (st === 'running' || st === 'waiting') return; // erst nach dem Turn bzw. dem Dialog (setStatus reicht nach)
+    // Codex meldet SessionStart erst beim ersten Prompt und steht bis dahin auf "startet…" - nach
+    // kurzer Anlaufzeit des TUI trotzdem tippen, sonst kaeme die Umbenennung dort nie an
+    if (st === 'starting' && Date.now() - (this.spawnedAt || 0) < 3000) {
+      clearTimeout(this.nameWriteTimer);
+      this.nameWriteTimer = setTimeout(() => this.flushNameWrite(), 2000);
+      return;
+    }
+    this.pendingNameWrite = null;
+    this.pressEnter(this.typeText(`${RENAME_COMMAND[this.entry.agent]} ${line}`));
+  }
+
+  // Nach Prompt/Tasten per API ist ein alter Status kein Ergebnis fuer `wait`, bis sich etwas tut.
+  // 'run' (Prompt): bis der Agent arbeitet - Codex meldet beim ersten Prompt erst SessionStart
+  // (-> bereit) und danach UserPromptSubmit. 'change' (Tasten): bis zum naechsten Statuswechsel,
+  // z. B. Rueckfrage beantwortet. Tut sich nichts (Eingabe ging ins Leere), faellt die Sperre nach 15 s.
+  markPending(mode) {
+    this.pendingTurn = mode;
+    clearTimeout(this.pendingTimer);
+    this.pendingTimer = setTimeout(() => {
+      if (!this.pendingTurn) return;
+      this.pendingTurn = null;
+      this.mgr.emitStatus(this.entry);
+    }, 15000);
+  }
+
+  sendKeys(names) {
+    if (!this.proc) throw apiError(409, `${this.entry.name} läuft nicht (beendet oder vor Neustart)`);
+    const appCursor = !!this.term?.modes?.applicationCursorKeysMode;
+    const seqs = names.map(n => {
+      const s = keySequence(n, appCursor);
+      if (s === null) throw apiError(400, `Unbekannte Taste „${n}"`);
+      return s;
+    });
+    // Einzeln mit kurzem Abstand: ein ESC direkt vor der naechsten Taste laese die TUI sonst als Alt+Taste
+    seqs.forEach((s, i) => setTimeout(() => this.write(s), i * 60));
+    this.markPending('change');
+  }
+
+  // Terminalinhalt als Text fuer die Steuer-API; im Vollbild (Alternate Screen) der sichtbare Bildschirm
+  async readText(lines = 60) {
+    if (this.term) {
+      await new Promise(r => this.term.write('', r)); // noch ausstehende Ausgabe erst verarbeiten
+      return bufferText(this.term, lines);
+    }
+    const data = state.loadScrollback(this.entry.id);
+    if (!data) return '';
+    const tmp = new Terminal({ cols: this.cols, rows: this.rows, scrollback: 8000, allowProposedApi: true });
+    try {
+      await new Promise(r => tmp.write(data, r));
+      return bufferText(tmp, lines);
+    } finally {
+      tmp.dispose();
+    }
+  }
 
   // Bild von einem (entfernten) Fenster: in die Zwischenablage DIESES Rechners legen und dem
   // Agenten seine Bild-Taste schicken - derselbe Weg wie beim lokalen Ctrl+V.
@@ -244,12 +457,13 @@ class Session {
 }
 
 class SessionManager {
-  constructor(port, { onData, onChange, onGone }) {
+  constructor(port, { onData, onChange, onStatus, onGone }) {
     this.port = port;
     this.sessions = new Map();
     this.feed = [];
     this.onData = onData;
     this.onChange = onChange;
+    this.onStatus = onStatus;
     this.onGone = onGone;
   }
 
@@ -262,6 +476,8 @@ class SessionManager {
       }
       entry.unread = false;
       entry.sizeInfo = null;
+      // Altbestand ohne Vermerk: ein vom Standard abweichender Name gilt als selbst vergeben
+      if (!entry.nameSource) entry.nameSource = entry.name === defaultName(entry) ? 'auto' : 'user';
       this.sessions.set(entry.id, new Session(this, entry));
     }
   }
@@ -271,7 +487,8 @@ class SessionManager {
     const id = crypto.randomBytes(5).toString('hex');
     const entry = {
       id, agent, cwd, args: args || '',
-      name: name || `${agent} · ${cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop()}`,
+      name: name || defaultName({ agent, cwd }),
+      nameSource: name ? 'user' : 'auto', nameAt: name ? Date.now() : 0,
       createdAt: Date.now(), status: 'starting', detail: 'startet…', statusSource: 'system',
       unread: false, title: '', agentSessionId: null, exitedAt: null, sizeInfo: null,
     };
@@ -310,9 +527,14 @@ class SessionManager {
     if (this.onGone) this.onGone(id);
   }
 
-  rename(id, name) {
+  rename(id, name, { toAgent = true } = {}) {
     const s = this.sessions.get(id);
-    if (s && name) { s.entry.name = String(name).slice(0, 80); this.persistAndBroadcast(); }
+    if (!s || !name) return;
+    s.entry.name = String(name).slice(0, 80);
+    s.entry.nameSource = 'user'; // ab jetzt nicht mehr automatisch nachziehen
+    s.entry.nameAt = Date.now();
+    if (toAgent) s.renameInAgent(s.entry.name);
+    this.persistAndBroadcast();
   }
 
   markRead(id) {
@@ -326,6 +548,28 @@ class SessionManager {
   }
 
   emitData(id, d) { if (this.onData) this.onData(id, d); }
+
+  emitStatus(entry) { if (this.onStatus) this.onStatus(entry); }
+
+  // Session fuer die Steuer-API finden: ID, exakter Name, ID-Anfang oder eindeutiger Namensteil
+  resolve(query) {
+    const q = String(query ?? '').trim();
+    if (!q) throw apiError(400, 'Session fehlt');
+    const low = q.toLowerCase();
+    const all = [...this.sessions.values()];
+    const tries = [
+      s => s.entry.id === q,
+      s => s.entry.name.toLowerCase() === low,
+      s => s.entry.id.startsWith(low),
+      s => s.entry.name.toLowerCase().includes(low),
+    ];
+    for (const match of tries) {
+      const hits = all.filter(match);
+      if (hits.length === 1) return hits[0];
+      if (hits.length > 1) throw apiError(409, `„${q}" ist mehrdeutig: ${hits.map(h => `${h.entry.id} (${h.entry.name})`).join(', ')}`);
+    }
+    throw apiError(404, `Keine Session „${q}"`);
+  }
 
   pushFeed(text) {
     this.feed.unshift({ t: Date.now(), text: String(text).slice(0, 160) });

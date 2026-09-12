@@ -6,6 +6,7 @@ const state = require('./state');
 
 const HOOK = path.join(__dirname, 'hooks', 'agent-hook.js');
 const PI_EXT = path.join(__dirname, 'hooks', 'aioc-pi-ext.ts');
+const BIN = path.join(__dirname, '..', 'bin');
 const fwd = p => p.replace(/\\/g, '/');
 
 const AGENTS = ['claude', 'codex', 'pi', 'pwsh'];
@@ -20,6 +21,9 @@ function buildEnv(port, sessionId, agent) {
   }
   env.AIOC_PORT = String(port);
   env.AIOC_SESSION = sessionId;
+  // bin/ (aioc-ctl) nur fuer Aioc-Sessions vorne in den PATH - global wird nichts installiert
+  const pathKey = Object.keys(env).find(k => k.toLowerCase() === 'path') || 'PATH';
+  env[pathKey] = BIN + path.delimiter + (env[pathKey] || '');
   return env;
 }
 

@@ -10,6 +10,8 @@ const state = require('./state');
 const { SessionManager } = require('./sessions');
 const tlsUtil = require('./tls');
 const { lanLinks } = require('./lan');
+const { GitWatcher } = require('./git');
+const { createApi } = require('./api');
 
 const info = state.loadDaemonInfo();
 const PORT = Number(process.env.AIOC_DAEMON_PORT || info.port);
@@ -75,14 +77,20 @@ function setBackgroundOpacity(v) {
   state.saveUiState(ui);
 }
 
+// Branch + Arbeitsstand je Session-Ordner (nur lesend) fuer Sidebar und Pane-Kopfzeilen
+const git = new GitWatcher(() => broadcastSessions());
+
 const mgr = new SessionManager(PORT, {
   onData: (id, d) => {
     for (const ws of wss.clients) if (ws.attached?.has(id)) send(ws, { t: 'data', id, d });
   },
   onChange: () => broadcastSessions(),
-  onGone: id => { for (const ws of wss.clients) send(ws, { t: 'gone', id }); },
+  // Statuswechsel: wartende `aioc-ctl wait` bedienen, Git-Stand zeitnah nachziehen (Agent koennte committet haben)
+  onStatus: entry => { api.checkWaiters(); git.refresh(entry.cwd, 3000); },
+  onGone: id => { for (const ws of wss.clients) send(ws, { t: 'gone', id }); api.checkWaiters(); },
 });
 mgr.adoptSaved();
+const api = createApi({ mgr, info, git, isLoopback });
 
 function send(ws, obj) { if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} } }
 
@@ -123,7 +131,7 @@ function lanState() {
 }
 
 function stateMsg(t) {
-  return { t, sessions: mgr.toClient(), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
+  return { t, sessions: mgr.toClient().map(e => ({ ...e, git: git.get(e.cwd) })), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
 }
 
 function broadcastSessions() {
@@ -175,6 +183,8 @@ function handleRequest(req, res) {
     });
     return;
   }
+  // Steuer-API fuer Skripte/Agenten (bin/aioc-ctl) - nur Loopback + Token, siehe api.js
+  if (url.pathname.startsWith('/api/')) { api.handle(req, res, url); return; }
   if (url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, name: 'aioc', pid: process.pid, sessions: mgr.sessions.size, lan: !!lanServer }));
@@ -311,3 +321,14 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('SIGHUP', shutdown);
 setInterval(() => { try { mgr.saveAllNow(); } catch {} }, 30000).unref();
+
+// Git-Stand: Ordner mit laufenden Sessions alle 15 s, die uebrigen alle 2 min - dazu sofort nach
+// jedem Statuswechsel (onStatus)
+function refreshGit() {
+  const cwds = new Map();
+  for (const s of mgr.sessions.values()) cwds.set(s.entry.cwd, cwds.get(s.entry.cwd) || !!s.proc);
+  for (const [cwd, live] of cwds) git.refresh(cwd, live ? 15000 : 120000);
+  git.prune([...cwds.keys()]);
+}
+refreshGit();
+setInterval(refreshGit, 5000).unref();

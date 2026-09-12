@@ -19,13 +19,16 @@ The status is **not guessed from screen output**. Each agent reports it through 
 - **Exact status sources.** Claude Code hooks (via `--settings`), Codex hooks (via `-c`), a tiny Pi extension (via `-e`), the terminal title as a second, independent source, and an activity heuristic for plain shells. All of it is passed on the command line of the individual session.
 - **Daemon and window are separate.** A small background service owns the sessions. Closing the window — or crashing it, or updating Aioc — never kills an agent. Reopen the window and everything is still there, scrollback included.
 - **Survives reboots.** Session list and scrollback are persisted continuously. After a restart every session comes back as *"before restart"* with its full terminal content; one click resumes the agent's own conversation (`claude --resume`, `codex resume`, `pi --session`) using the IDs Aioc learned from the hooks. Only a turn that was mid-flight at shutdown is lost.
-- **Built for many sessions.** Split view (1 → 2 → 2×2), folder groups you can collapse, sort by folder or by status, a resizable sidebar, remembered window position, and Windows-Terminal-style keys.
+- **Built for many sessions.** Split panes freely — right, down, as deep as you like, drag the dividers, zoom one pane to the full area. Plus folder groups you can collapse, sort by folder or by status, a resizable sidebar, remembered window position, and Windows-Terminal-style keys.
 - **The UI is a web app.** The daemon serves it; Electron is just the shell around it. Switch on **LAN** and the same UI runs on a laptop, a tablet (as a PWA) or a second PC — over HTTPS/WSS with a pinned certificate (see [Use it from another machine](#use-it-from-another-machine-lan)).
-- **Every pane has its own header.** In split view each terminal carries name, agent, folder, session ID and its own actions.
+- **Every pane has its own header.** In split view each terminal carries name, agent, folder, branch, session ID and its own actions.
+- **Branch at a glance.** Folder headings and pane headers show the git branch and the working tree, e.g. `⎇ main ±3 ↑1` (changes · ahead · behind). Read-only, and always with `--no-optional-locks`, so Aioc never takes the index lock away from an agent that is committing.
+- **Names stay in sync, both ways.** Rename a session inside Claude Code or Codex with `/rename` and Aioc picks it up; rename it in Aioc with F2 and Aioc sets it in the agent. Without a name of your own, Aioc follows Claude's own session title too (see [Session names](#session-names)).
+- **A control CLI for scripts and agents.** `aioc-ctl` lists sessions, reads a terminal as plain text, sends a prompt, answers a dialog and waits for the result — so one agent can hand work to another. See [Scripting](#scripting-aioc-ctl).
 
 ## What Aioc deliberately does not do
 
-- **No git automation.** No worktree creation, no branch juggling, no fanning one prompt out to five agents, no merging. Aioc knows your folders — you keep control of your repositories.
+- **No git automation.** No worktree creation, no branch juggling, no fanning one prompt out to five agents, no merging. Aioc *shows* branch and working-tree state and never runs a git command that writes. Aioc knows your folders — you keep control of your repositories.
 - **No diff review, no editor, no embedded browser.** Aioc is terminals plus overview. Nothing else.
 - **No changes to `~/.claude`, `~/.codex` or `~/.pi`.** Everything Aioc needs is injected per session start. Your existing hooks, settings and extensions keep working exactly as before.
 - **No cloud, no accounts, no telemetry.** Everything lives on your machine under `%USERPROFILE%\.aioc`.
@@ -60,9 +63,12 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | --- | --- |
 | `Ctrl+Shift+N` | New session |
 | `Ctrl+1 … 9` | Switch to the n-th session in the list — loads it into the focused pane, or moves focus to the pane that already shows it |
-| `F2` / `Ctrl+Shift+R` | Rename the current session (Enter saves, Esc cancels) |
-| `Alt+Shift+D` | Split: one pane → two side by side → 2×2 → back to one |
-| `Alt+← → ↑ ↓` | Move focus between panes (like Windows Terminal) |
+| `F2` / `Ctrl+Shift+R` | Rename the current session (Enter saves, Esc cancels) — the name is set inside the agent as well (Claude Code, Codex) |
+| `Alt+Shift+D` | Split the focused pane along its longer side |
+| `Alt+Shift++` / `Alt+Shift+-` | Split to the right / split downwards |
+| `Alt+Shift+Z` | Zoom the focused pane to the full area (again: back) |
+| `Alt+Shift+W` | Close the pane — the session keeps running and stays in the list |
+| `Alt+← → ↑ ↓` | Move focus to the neighbouring pane (like Windows Terminal) |
 | `Shift+Enter` | New line in the agent's prompt without submitting (Claude Code, Codex, Pi) |
 | `Ctrl+Shift+F` | Search in the current terminal |
 | `Ctrl+C` / `Ctrl+V` | Copy when text is selected (otherwise sends the interrupt) / paste — text is pasted, an **image** in the clipboard is handed to the agent (Claude Code, Codex) |
@@ -71,7 +77,8 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - Click a pane to focus it; the sidebar always loads sessions into the focused pane.
 - Click a folder heading to collapse the group. Collapsed groups show `?` (waiting) and `●` (unread) as a hint.
 - The `⇅` switch sorts by folder (grouped) or by status (waiting first, flat).
-- Drag the divider to resize the sidebar; double-click resets it.
+- Drag the divider to resize the sidebar; double-click resets it. The same works for the dividers between panes — double-click puts them back to half and half.
+- Each pane header carries its own buttons: **◧** split right, **⬒** split down, **⤢** zoom, **✕** close the pane.
 - Double-click a session name (in the sidebar or in the header) to rename it.
 - **⚙ Background image and per-device settings:** pick an image (stored by the daemon, so remote windows show it too), and set opacity and terminal font size for *this* device — like `backgroundImage` in Windows Terminal.
 - **Close** ends the process (asks first). **Remove** deletes an exited session and its scrollback from the list.
@@ -95,7 +102,46 @@ Start Aioc. Every previous session is listed as *"vor Neustart · wiederherstell
 
 The hooks are a 20-line script that reads the hook JSON from stdin and posts it to the daemon on `127.0.0.1`, tagged with the session ID from the environment. It never blocks the agent and always exits 0.
 
+### Session names
+
+Aioc keeps the session name in sync with the agent. Claude Code writes its session name into the terminal title (`✳ Blau-Test`, and `◐ Blau-Test` while it works), so a `/rename` inside Claude shows up in Aioc a moment later. Until you name a session yourself, Aioc follows Claude's own generated title too — a fresh `claude · myrepo` turns into what the session is actually about.
+
+A name **you** set in Aioc (F2) is never overwritten by a generated title. Only a later `/rename` inside the agent beats it, because that one is newer and explicitly yours. To tell the two apart, Aioc reads Claude's own session registry (`~/.claude/sessions/<pid>.json`: `name`, `nameSource` — `user` vs `derived` — and `nameSince`). Claude writes that file a moment after the title, so Aioc re-checks twice before giving up; if the file is missing or its format changes, Aioc simply falls back to the title.
+
+Codex writes its thread name into the title as `<name> | <folder>`, and it only ever puts a name there once you renamed the thread. So in Codex any name in the title counts as yours and replaces a name you gave in Aioc.
+
+It works in the other direction as well: what you type into F2 is set inside the agent, via `/rename` in Claude Code and in Codex. Aioc waits for a quiet moment before typing — never into a running turn, never into an open question — so a rename you trigger while an agent is working arrives the moment it is done. Codex reports its session start only with the first prompt, so a freshly started Codex session is renamed as soon as its TUI is up.
+
+Titles that are not names stay out: `Claude Code`, Codex' bare folder title, the path PowerShell prompts write. Hover a name to see the agent's raw title.
+
 **Note on Codex:** Codex asks once whether it may run newly configured hooks — and that dialog is one-shot. If it is dismissed, the hooks are silently never executed. Because the only hooks involved are Aioc's own command-line injections, Aioc starts Codex with `--dangerously-bypass-hook-trust`. If you keep your own hooks in `~/.codex/hooks.json`, be aware that this flag covers them too.
+
+## Scripting (`aioc-ctl`)
+
+Sessions can be driven from the command line — by your own scripts, and by the agents themselves. `bin\` is prepended to the `PATH` of Aioc sessions only, so inside any Aioc session `aioc-ctl` is simply there; nothing is installed globally and no agent configuration is touched.
+
+```powershell
+aioc-ctl list                                   # all sessions with status, folder and branch
+aioc-ctl read <session> [--lines N|--all]       # terminal content as plain text
+aioc-ctl read <session> --answer                # the agent's last answer (Claude, Codex)
+aioc-ctl prompt <session> "<text>" --wait       # type, submit, wait for the turn, print the answer
+aioc-ctl key <session> enter                    # keys: enter esc tab up down ctrl+c … or one character
+aioc-ctl wait <session> [--until done,waiting]  # block until the session reaches one of these states
+```
+
+`<session>` is an ID, a name, a unique part of a name, or `self` for the calling session. `--json` prints machine-readable output. Exit codes: `0` ok, `1` error, `2` wrong usage, `124` timeout. Text that would fight with shell quoting goes in through stdin: `"…" | aioc-ctl prompt build -`.
+
+So one agent can hand work to another and pick up the result:
+
+```powershell
+aioc-ctl prompt tests "Run the failing test and name the root cause in two sentences." --wait --timeout 900
+```
+
+Input sent this way counts as answered only once the agent has actually started working, so `--wait` can never return the *previous* turn's "done" — Codex, for instance, reports `SessionStart` (→ *idle*) only when it receives its first prompt. If the agent stops with a question instead, `wait` returns `waiting`, `aioc-ctl read` shows the dialog and `aioc-ctl key` answers it.
+
+Whatever arrives this way is visible to you: the event feed shows `Prompt von <session>` with the first few words, exactly like any other status change.
+
+Under the hood this is a small HTTP API on the daemon (`/api/…`). It accepts **loopback connections only**, is refused on the LAN listener, and always needs the token from `daemon.json` — writing into a terminal is full access to the machine.
 
 ## Use it from another machine (LAN)
 
@@ -121,13 +167,16 @@ The one thing a session cannot have twice is its terminal size. When two clients
 - Locally the daemon listens on `127.0.0.1` only. The LAN listener is off until you switch it on, uses TLS, and every WebSocket connection needs the token.
 - A terminal is full access to your machine. Keep the link private, and never expose the port beyond your LAN — use a VPN (Tailscale, WireGuard) instead of port forwarding.
 - The hook endpoint (`/event`) accepts loopback connections only, on both listeners.
+- The control API (`/api/…`, used by `aioc-ctl`) is loopback-only too **and** needs the token; it is refused on the LAN listener even when the request comes from `127.0.0.1`.
 
 ## Project layout
 
 ```
 daemon/        the service: PTYs (node-pty/ConPTY), scrollback (headless xterm),
-               status engine, persistence, hook endpoint, WebSocket protocol
+               status engine, persistence, hook endpoint, WebSocket protocol,
+               control API (api.js) and branch/working-tree state (git.js, read-only)
 daemon/hooks/  agent-hook.js (Claude/Codex relay), aioc-pi-ext.ts (Pi extension)
+cli/ + bin/    aioc-ctl — bin/ is prepended to the PATH of Aioc sessions
 ui/            the web app the daemon serves (vanilla JS + xterm.js)
 shell/         the Electron shell (starts the daemon if needed, loads the UI)
 ```

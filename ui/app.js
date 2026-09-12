@@ -1,4 +1,4 @@
-// Aioc UI client: sidebar + xterm.js terminals in 1/2/4 panes (each with its own header),
+// Aioc UI client: sidebar + xterm.js terminals in freely split panes (each with its own header),
 // connected to the daemon via WebSocket. Works locally (Electron) and from another machine.
 /* global Terminal, FitAddon, WebglAddon, SearchAddon, WebLinksAddon, Unicode11Addon */
 (() => {
@@ -68,7 +68,7 @@
     if (lo !== null && lo !== '') localOpacity = Number(lo);
   } catch {}
   function saveLayout() {
-    try { localStorage.setItem('aioc-layout', JSON.stringify({ panes: panes.map(p => p.id), focused })); } catch {}
+    try { localStorage.setItem('aioc-layout', JSON.stringify({ tree: serTree(tree), focused, zoom: zoomed ? panes.indexOf(zoomed) : -1 })); } catch {}
   }
   function restoreLayout() {
     if (layoutRestored) return;
@@ -76,14 +76,61 @@
     if (params.get('split')) return;
     try {
       const lay = JSON.parse(localStorage.getItem('aioc-layout') || 'null');
-      if (!lay || ![1, 2, 4].includes(lay.panes?.length)) return;
-      panes = lay.panes.map(id => ({ id: sessions.some(s => s.id === id) ? id : null }));
-      focused = Math.min(lay.focused || 0, panes.length - 1);
+      // Altes Format (bis 09/2026): festes Raster mit 1, 2 oder 4 Panes
+      const t = lay?.tree ? deserTree(lay.tree) : [1, 2, 4].includes(lay?.panes?.length) ? gridTree(lay.panes) : null;
+      if (!t) return;
+      for (const leaf of leavesOf(t)) if (!sessions.some(s => s.id === leaf.id)) leaf.id = null;
+      tree = t;
+      panes = leavesOf(tree);
+      focused = Math.min(Math.max(0, lay.focused || 0), panes.length - 1);
+      zoomed = panes.length > 1 && lay.zoom >= 0 ? panes[lay.zoom] || null : null;
+      layoutDirty = true;
     } catch {}
   }
   let filter = 'all', pendingSelectNew = false, focusedOnce = false;
-  let panes = [{ id: null }], focused = 0;
   const terms = new Map(); // id -> {term, fit, search, wrap, attached}
+
+  // ---------- Layout: Baum aus Splits ----------
+  // Blatt = ein Pane { id, el }, Split = { dir: 'row' (nebeneinander) | 'col' (untereinander), ratio, a, b }.
+  // panes ist die flache Liste der Blätter in Baumreihenfolge, focused ein Index darin.
+  const MAX_PANES = 9;
+  const isLeaf = n => !n.dir;
+  const clampRatio = r => Math.min(0.9, Math.max(0.1, Number(r) || 0.5));
+  function leavesOf(n, acc = []) {
+    if (isLeaf(n)) acc.push(n);
+    else { leavesOf(n.a, acc); leavesOf(n.b, acc); }
+    return acc;
+  }
+  const serTree = n => (isLeaf(n) ? { id: n.id } : { dir: n.dir, ratio: n.ratio, a: serTree(n.a), b: serTree(n.b) });
+  function deserTree(o) {
+    if (o && (o.dir === 'row' || o.dir === 'col')) return { dir: o.dir, ratio: clampRatio(o.ratio), a: deserTree(o.a), b: deserTree(o.b) };
+    return { id: typeof o?.id === 'string' ? o.id : null };
+  }
+  function gridTree(ids) {
+    const leaf = i => ({ id: ids[i] ?? null });
+    if (ids.length === 4) return { dir: 'col', ratio: 0.5, a: { dir: 'row', ratio: 0.5, a: leaf(0), b: leaf(1) }, b: { dir: 'row', ratio: 0.5, a: leaf(2), b: leaf(3) } };
+    if (ids.length === 2) return { dir: 'row', ratio: 0.5, a: leaf(0), b: leaf(1) };
+    return leaf(0);
+  }
+  function replaceNode(n, target, repl) {
+    if (n === target) return repl;
+    if (!isLeaf(n)) { n.a = replaceNode(n.a, target, repl); n.b = replaceNode(n.b, target, repl); }
+    return n;
+  }
+  function parentOf(n, target) {
+    if (isLeaf(n)) return null;
+    if (n.a === target || n.b === target) return n;
+    return parentOf(n.a, target) || parentOf(n.b, target);
+  }
+  const splitParam = params.get('split');
+  let tree = gridTree(splitParam === '4' ? [null, null, null, null] : splitParam === '1' || splitParam === '2' ? [null, null] : [null]);
+  let panes = leavesOf(tree), focused = 0, zoomed = null, layoutDirty = true, builtRoot = null;
+
+  // Alt+Shift+Plus/Minus: auf deutscher Tastatur ist Shift+"+" ein "*" - deshalb auch am
+  // Windows-Tastencode (VK_OEM_PLUS 187 / VK_OEM_MINUS 189) und am Ziffernblock erkennen
+  const isPlus = e => e.key === '+' || e.keyCode === 187 || e.code === 'NumpadAdd';
+  const isMinus = e => e.key === '-' || e.key === '_' || e.keyCode === 189 || e.code === 'NumpadSubtract';
+  const paneKey = e => e.altKey && e.shiftKey && !e.ctrlKey && (isPlus(e) || isMinus(e) || /^[dzw]$/i.test(e.key));
 
   let sortMode = 'ordner', collapsed = new Set();
   try { sortMode = localStorage.getItem('aioc-sort') || 'ordner'; } catch {}
@@ -94,9 +141,6 @@
       localStorage.setItem('aioc-collapsed', JSON.stringify([...collapsed]));
     } catch {}
   };
-  if (params.get('split') === '4') panes.push({ id: null }, { id: null }, { id: null });
-  else if (params.get('split') === '1' || params.get('split') === '2') panes.push({ id: null });
-
   const activeId = () => panes[focused]?.id || null;
   const sessionOf = id => sessions.find(s => s.id === id);
 
@@ -252,7 +296,7 @@
       }
       if (ev.ctrlKey && ev.shiftKey && (ev.key === 'F' || ev.key === 'N' || ev.key === 'R')) return false;
       if (ev.key === 'F2') return false; // Umbenennen
-      if (ev.altKey && ev.shiftKey && (ev.key === 'D' || ev.key === 'd')) return false;
+      if (paneKey(ev)) return false; // Teilen, Zoom, Pane schließen
       if (ev.altKey && !ev.ctrlKey && !ev.shiftKey && ev.key.startsWith('Arrow')) return false; // Pane-Fokus
       if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
       return true;
@@ -370,7 +414,7 @@
     const id = panes[i]?.id;
     if (!id) return;
     const t = terms.get(id);
-    if (!t || !t.wrap.classList.contains('active')) return;
+    if (!t || !t.wrap.classList.contains('active') || !t.wrap.isConnected) return; // gezoomt/Handy: nicht im Bild
     try {
       t.fit.fit();
       const { cols, rows } = t.term;
@@ -388,6 +432,8 @@
     const shownIn = panes.findIndex(p => p.id === id);
     if (shownIn >= 0 && shownIn !== paneIdx) {
       focused = shownIn;
+      if (zoomed) zoomed = panes[shownIn]; // gezoomt: die Zoom-Ansicht wechselt mit
+      if (MOBILE.matches) document.body.classList.add('show-term');
       saveLayout();
       renderAll();
       requestAnimationFrame(() => terms.get(id)?.term.focus());
@@ -407,36 +453,77 @@
     if (s && s.unread) send({ t: 'markRead', id });
   }
 
-  // Alt+Pfeil: Fokus zwischen den Panes bewegen (Raster: 1, 2 nebeneinander oder 2x2), wie im Windows Terminal
-  function moveFocus(dir) {
-    if (panes.length < 2) return;
-    const cols = panes.length === 4 ? 2 : panes.length;
-    const rows = panes.length === 4 ? 2 : 1;
-    let r = Math.floor(focused / cols), c = focused % cols;
-    if (dir === 'ArrowLeft') c--; else if (dir === 'ArrowRight') c++;
-    else if (dir === 'ArrowUp') r--; else if (dir === 'ArrowDown') r++;
-    if (c < 0 || c >= cols || r < 0 || r >= rows) return;
-    focused = r * cols + c;
-    renderAll();
-    const id = panes[focused].id;
-    if (id) requestAnimationFrame(() => terms.get(id)?.term.focus());
-  }
+  const focusActiveTerm = () => { const id = activeId(); if (id) requestAnimationFrame(() => terms.get(id)?.term.focus()); };
 
-  // 1 Pane -> 2 nebeneinander -> 2x2 -> zurück auf 1 (die fokussierte Session bleibt)
-  function toggleSplit() {
-    if (panes.length === 1) {
-      panes.push({ id: null });
-      focused = 1;
-    } else if (panes.length === 2) {
-      panes.push({ id: null }, { id: null });
-      focused = 2;
-    } else {
-      panes = [{ id: panes[focused]?.id || null }];
-      focused = 0;
-    }
+  // Nach jeder Strukturänderung: flache Liste neu, Fokus auf das gewünschte Blatt
+  function relayout(focusLeaf) {
+    panes = leavesOf(tree);
+    focused = Math.max(0, panes.indexOf(focusLeaf));
+    if (zoomed && !panes.includes(zoomed)) zoomed = null;
+    layoutDirty = true;
     saveLayout();
     renderAll();
-    fitAll();
+    focusActiveTerm();
+  }
+
+  // Alt+Pfeil: Fokus zum Nachbar-Pane in Pfeilrichtung - nach Lage auf dem Bildschirm, wie im
+  // Windows Terminal. Gezoomt wird dabei erst der Zoom aufgehoben.
+  function moveFocus(dir) {
+    if (panes.length < 2 || MOBILE.matches) return;
+    if (zoomed) { zoomed = null; layoutDirty = true; renderPanes(); }
+    const cur = panes[focused].el.getBoundingClientRect();
+    const horiz = dir === 'ArrowLeft' || dir === 'ArrowRight';
+    let best = -1, bestScore = Infinity;
+    panes.forEach((p, i) => {
+      if (i === focused || !p.el?.isConnected) return;
+      const r = p.el.getBoundingClientRect();
+      const gap = dir === 'ArrowLeft' ? cur.left - r.right : dir === 'ArrowRight' ? r.left - cur.right
+        : dir === 'ArrowUp' ? cur.top - r.bottom : r.top - cur.bottom;
+      const overlap = horiz ? Math.min(r.bottom, cur.bottom) - Math.max(r.top, cur.top)
+        : Math.min(r.right, cur.right) - Math.max(r.left, cur.left);
+      if (gap < -3 || overlap <= 0) return; // liegt nicht in dieser Richtung oder nicht daneben
+      const offset = horiz ? Math.abs(r.top + r.height / 2 - (cur.top + cur.height / 2))
+        : Math.abs(r.left + r.width / 2 - (cur.left + cur.width / 2));
+      const score = gap * 10000 + offset; // der nächste zuerst, bei Gleichstand der mittigste
+      if (score < bestScore) { bestScore = score; best = i; }
+    });
+    if (best >= 0) focused = best;
+    saveLayout();
+    renderAll();
+    focusActiveTerm();
+  }
+
+  // Fokussiertes Pane teilen: 'row' = neues Pane rechts, 'col' = darunter, 'auto' = entlang der
+  // längeren Seite (wie Alt+Shift+D im Windows Terminal). Das neue Pane ist leer und hat den Fokus.
+  function splitFocused(dir) {
+    const leaf = panes[focused];
+    if (!leaf || MOBILE.matches || panes.length >= MAX_PANES) return;
+    if (zoomed) { zoomed = null; layoutDirty = true; renderPanes(); }
+    if (dir === 'auto') {
+      const r = leaf.el?.getBoundingClientRect();
+      dir = !r || r.width >= r.height ? 'row' : 'col';
+    }
+    const fresh = { id: null };
+    tree = replaceNode(tree, leaf, { dir, ratio: 0.5, a: leaf, b: fresh });
+    relayout(fresh);
+  }
+
+  // Pane schließen betrifft nur die Ansicht: die Session läuft weiter und bleibt in der Liste
+  function closePane(leaf = panes[focused]) {
+    if (!leaf || panes.length < 2) return;
+    const parent = parentOf(tree, leaf);
+    const sibling = parent.a === leaf ? parent.b : parent.a;
+    tree = replaceNode(tree, parent, sibling);
+    relayout(leavesOf(sibling)[0]);
+  }
+
+  function toggleZoom() {
+    if (MOBILE.matches || (panes.length < 2 && !zoomed)) return;
+    zoomed = zoomed ? null : panes[focused];
+    layoutDirty = true;
+    saveLayout();
+    renderAll();
+    focusActiveTerm();
   }
 
   // ---------- Rendering ----------
@@ -537,8 +624,11 @@
         g.title = grp;
         const isCol = collapsed.has(grp);
         const badge = isCol ? inGrp.map(x => (x.status === 'waiting' ? '?' : x.unread ? '●' : '')).join('') : '';
-        g.innerHTML = `<span class="arr">${isCol ? '▸' : '▾'}</span>`;
-        g.append(grp);
+        g.innerHTML = `<span class="arr">${isCol ? '▸' : '▾'}</span><span class="path"></span>`;
+        g.querySelector('.path').textContent = grp;
+        const br = document.createElement('span');
+        br.className = 'br';
+        if (fillGit(br, inGrp[0]?.git)) g.appendChild(br);
         if (badge) {
           const b = document.createElement('span');
           b.className = 'badge'; b.textContent = badge;
@@ -560,9 +650,17 @@
       b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="st"></span>`;
       b.querySelector('.ic').textContent = ICON[s.status] || '·';
       b.querySelector('.nm').textContent = s.name;
+      b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
       b.querySelector('.ag').textContent = s.agent;
-      b.querySelector('.st').textContent = s.detail || '';
-      b.querySelector('.st').title = s.detail || '';
+      const st = b.querySelector('.st');
+      st.title = s.detail || '';
+      if (sortMode === 'status') {
+        // flache Statusliste ohne Ordnerköpfe: der Branch steht vor dem Detail
+        const br = document.createElement('span');
+        br.className = 'br';
+        if (fillGit(br, s.git)) st.append(br, ' · ');
+      }
+      st.append(s.detail || '');
       b.addEventListener('click', () => assignToPane(focused, s.id));
       b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(s.id); });
       list.appendChild(b);
@@ -583,32 +681,72 @@
     $('recents').innerHTML = recents.map(r => `<option value="${r.replaceAll('"', '&quot;')}">`).join('');
   }
 
-  // Jedes Pane: eigene Kopfzeile (Name, Agent, Ordner, Session, Aktionen) + Terminalbereich
-  function buildPane(host) {
+  // Branch + Arbeitsstand kompakt, z. B. "⎇ master ±3 ↑1 ↓2" - reine Anzeige, Aioc fasst Repos nicht an
+  function fillGit(span, g) {
+    span.replaceChildren();
+    span.title = '';
+    if (!g) return false;
+    const changes = (g.changed || 0) + (g.untracked || 0) + (g.conflicts || 0);
+    const marks = [changes ? '±' + changes : '', g.ahead ? '↑' + g.ahead : '', g.behind ? '↓' + g.behind : ''].filter(Boolean).join(' ');
+    const bn = document.createElement('span');
+    bn.className = 'bn';
+    bn.textContent = '⎇ ' + g.branch;
+    span.appendChild(bn);
+    if (marks) {
+      const bm = document.createElement('span');
+      bm.className = g.conflicts ? 'bm conflict' : 'bm';
+      bm.textContent = ' ' + marks;
+      span.appendChild(bm);
+    }
+    const lines = [g.detached ? `Losgelöster HEAD bei ${g.branch}` : `Branch ${g.branch}`];
+    if (g.changed) lines.push(`${g.changed} geänderte Datei${g.changed === 1 ? '' : 'en'}`);
+    if (g.untracked) lines.push(`${g.untracked} unversioniert`);
+    if (g.conflicts) lines.push(`${g.conflicts} mit Konflikt`);
+    if (!changes) lines.push('Arbeitsverzeichnis sauber');
+    if (g.upstream) lines.push(g.ahead || g.behind ? `${g.ahead} vor, ${g.behind} hinter ${g.upstream}` : `gleichauf mit ${g.upstream}`);
+    else if (!g.detached) lines.push('kein Upstream');
+    span.title = lines.join('\n');
+    return true;
+  }
+
+  // Jedes Pane: eigene Kopfzeile (Name, Agent, Ordner, Branch, Session, Aktionen, Teilen/Zoom) + Terminalbereich
+  function buildPane(leaf) {
     const el = document.createElement('div');
     el.className = 'pane';
     el.innerHTML = `
       <div class="phead">
         <button class="btn back" title="Zurück zur Liste">‹ Liste</button>
-        <span class="nm" title="Doppelklick: umbenennen"></span>
-        <span class="ag"></span>
-        <span class="cwd"></span>
-        <span class="sid"></span>
-        <span class="lim" title="Ein anderer Client zeigt diese Session gerade kleiner an – die kleinste Ansicht bestimmt die Terminalgröße"></span>
+        <span class="empty-lbl">Leeres Pane</span>
+        <span class="nm s-only" title="Doppelklick: umbenennen"></span>
+        <span class="ag s-only"></span>
+        <span class="cwd s-only"></span>
+        <span class="br s-only"></span>
+        <span class="sid s-only"></span>
+        <span class="lim s-only" title="Ein anderer Client zeigt diese Session gerade kleiner an – die kleinste Ansicht bestimmt die Terminalgröße"></span>
         <span class="sp"></span>
-        <button class="btn b-restore" hidden>Wiederherstellen</button>
-        <button class="btn b-rename">Umbenennen</button>
-        <button class="btn danger b-close" hidden>Schließen</button>
-        <button class="btn danger b-dispose" hidden>Entfernen</button>
+        <button class="btn b-restore s-only" hidden>Wiederherstellen</button>
+        <button class="btn b-rename s-only" title="Umbenennen (F2) – der Name wird auch im Agenten gesetzt (Claude Code, Codex)">Umbenennen</button>
+        <button class="btn danger b-close s-only" hidden>Schließen</button>
+        <button class="btn danger b-dispose s-only" hidden>Entfernen</button>
+        <span class="pbtns">
+          <button class="btn icon b-split-r" title="Rechts teilen (Alt+Shift+Plus)">◧</button>
+          <button class="btn icon b-split-d" title="Unten teilen (Alt+Shift+Minus)">⬒</button>
+          <button class="btn icon b-zoom" title="Zoom an/aus (Alt+Shift+Z)" aria-pressed="false">⤢</button>
+          <button class="btn icon b-unpane" title="Pane schließen – die Session läuft weiter (Alt+Shift+W)">✕</button>
+        </span>
       </div>
       <div class="pane-body">
         <div class="pane-empty"><div><h2>Keine Session</h2><p>Links eine Session wählen oder mit <b>+ Neu</b> starten.</p></div></div>
       </div>`;
-    const idOf = () => panes[[...host.children].indexOf(el)]?.id;
+    const idOf = () => leaf.id;
     el.addEventListener('mousedown', () => {
-      const idx = [...host.children].indexOf(el);
-      if (idx >= 0 && idx !== focused) { focused = idx; renderAll(); }
+      const idx = panes.indexOf(leaf);
+      if (idx >= 0 && idx !== focused) { focused = idx; saveLayout(); renderAll(); }
     }, true);
+    el.querySelector('.b-split-r').addEventListener('click', () => splitFocused('row'));
+    el.querySelector('.b-split-d').addEventListener('click', () => splitFocused('col'));
+    el.querySelector('.b-zoom').addEventListener('click', toggleZoom);
+    el.querySelector('.b-unpane').addEventListener('click', () => closePane(leaf));
     el.querySelector('.back').addEventListener('click', () => { document.body.classList.remove('show-term'); renderAll(); });
     el.querySelector('.b-rename').addEventListener('click', () => renamePrompt(idOf()));
     el.querySelector('.nm').addEventListener('dblclick', () => renamePrompt(idOf()));
@@ -628,26 +766,84 @@
     return el;
   }
 
+  // Teilbaum als verschachtelte Flex-Container; zwischen den Hälften eine ziehbare Trennlinie
+  function buildNode(n, depth = 0) {
+    if (isLeaf(n)) {
+      if (!n.el) n.el = buildPane(n);
+      return n.el;
+    }
+    const box = document.createElement('div');
+    box.className = 'split ' + n.dir;
+    const a = buildNode(n.a, depth + 1), b = buildNode(n.b, depth + 1);
+    const apply = () => { a.style.flex = `${n.ratio} 1 0`; b.style.flex = `${1 - n.ratio} 1 0`; };
+    apply();
+    const div = document.createElement('div');
+    div.className = 'divider';
+    div.style.zIndex = String(40 - depth); // T-Stoß: die Griffe überlappen, die äußere (längere) Linie gewinnt
+    div.title = 'Ziehen: Größe ändern · Doppelklick: halbe-halbe';
+    div.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      div.setPointerCapture(e.pointerId);
+      div.classList.add('drag');
+      const move = ev => {
+        const r = box.getBoundingClientRect();
+        n.ratio = clampRatio(n.dir === 'row' ? (ev.clientX - r.left) / r.width : (ev.clientY - r.top) / r.height);
+        apply();
+        fitAll();
+      };
+      const up = () => {
+        div.classList.remove('drag');
+        div.removeEventListener('pointermove', move);
+        div.removeEventListener('pointerup', up);
+        saveLayout();
+      };
+      div.addEventListener('pointermove', move);
+      div.addEventListener('pointerup', up);
+    });
+    div.addEventListener('dblclick', () => { n.ratio = 0.5; apply(); fitAll(); saveLayout(); });
+    box.append(a, div, b);
+    return box;
+  }
+
+  // Den Baum nur bei Strukturänderungen neu aufbauen - die Pane-Elemente (samt Terminal) werden
+  // dabei nur umgehängt, nie neu erzeugt. Gezoomt bzw. auf dem Handy ist nur ein Pane im Bild.
   function renderPanes() {
     const host = $('panes');
-    host.classList.toggle('split', panes.length > 1);
-    host.classList.toggle('split4', panes.length === 4);
-    while (host.children.length < panes.length) host.appendChild(buildPane(host));
-    while (host.children.length > panes.length) host.lastChild.remove();
+    const multi = panes.length > 1;
+    const root = MOBILE.matches ? panes[focused] : zoomed || tree;
+    if (layoutDirty || root !== builtRoot) {
+      const el = buildNode(root);
+      el.style.flex = '1 1 0';
+      host.replaceChildren(el);
+      builtRoot = root;
+      layoutDirty = false;
+      fitAll();
+    }
+    host.classList.toggle('multi', multi && root === tree);
 
     panes.forEach((p, i) => {
-      const el = host.children[i];
-      el.classList.toggle('focused', i === focused);
+      if (!p.el) p.el = buildPane(p);
+      const el = p.el;
       const s = sessionOf(p.id);
       const head = el.querySelector('.phead');
       const body = el.querySelector('.pane-body');
-      head.hidden = !s;
+      el.classList.toggle('focused', i === focused);
+      el.classList.toggle('nosess', !s);
+      head.hidden = !s && !multi;
       body.querySelector('.pane-empty').style.display = s ? 'none' : 'flex';
+      const full = panes.length >= MAX_PANES;
+      head.querySelector('.b-split-r').disabled = full;
+      head.querySelector('.b-split-d').disabled = full;
+      head.querySelector('.b-zoom').hidden = !multi;
+      head.querySelector('.b-zoom').setAttribute('aria-pressed', zoomed === p ? 'true' : 'false');
+      head.querySelector('.b-unpane').hidden = !multi;
       if (s) {
         const nm = head.querySelector('.nm');
         if (!nm.querySelector('input')) nm.textContent = s.name;
+        nm.title = (s.title ? `Titel im Agenten: ${s.title}\n` : '') + 'Doppelklick: umbenennen';
         head.querySelector('.ag').textContent = s.agent;
         head.querySelector('.cwd').textContent = s.cwd;
+        fillGit(head.querySelector('.br'), s.git);
         head.querySelector('.sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
         head.querySelector('.lim').textContent = s.sizeInfo?.limitedBy ? '⧉ Größe: ' + s.sizeInfo.limitedBy : '';
         head.querySelector('.b-close').hidden = !s.running;
@@ -671,7 +867,7 @@
     const s = sessionOf(id);
     if (!s) return;
     const idx = panes.findIndex(p => p.id === id);
-    const nm = idx >= 0 && $('panes').children[idx]?.querySelector('.phead .nm');
+    const nm = idx >= 0 && panes[idx].el?.querySelector('.phead .nm');
     if (!nm || nm.querySelector('input')) return;
     const input = document.createElement('input');
     input.className = 'rename';
@@ -766,7 +962,16 @@
     }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'n') { e.preventDefault(); openNew(); return; }
     if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'f') { e.preventDefault(); toggleSearch(); return; }
-    if (e.altKey && e.shiftKey && e.key.toLowerCase() === 'd') { e.preventDefault(); toggleSplit(); return; }
+    if (paneKey(e)) {
+      e.preventDefault();
+      const k = e.key.toLowerCase();
+      if (k === 'd') splitFocused('auto');
+      else if (k === 'z') toggleZoom();
+      else if (k === 'w') closePane();
+      else if (isPlus(e)) splitFocused('row');
+      else splitFocused('col');
+      return;
+    }
     if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key.startsWith('Arrow')) { e.preventDefault(); moveFocus(e.key); return; }
     if (e.ctrlKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
       const b = document.querySelector(`.sess[data-n="${e.key}"]`);
@@ -807,6 +1012,9 @@
     try { localStorage.setItem('aioc-sidew', '300'); } catch {}
     fitAll();
   });
+
+  // Fenster schmaler/breiter als die Handy-Grenze: Layout neu (Handy zeigt nur das fokussierte Pane)
+  MOBILE.addEventListener('change', () => { layoutDirty = true; renderAll(); fitAll(); });
 
   connect();
 })();
