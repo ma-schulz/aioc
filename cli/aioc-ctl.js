@@ -26,7 +26,8 @@ const HELP = `aioc-ctl – Aioc-Sessions lesen, anschreiben und auf sie warten
   <session>  ID, Name, eindeutiger Teil des Namens oder "self" (die eigene Aioc-Session)
   --json     Ausgabe als JSON
   Status:    starting running waiting done idle exited
-  Exit-Code: 0 ok · 1 Fehler · 2 falscher Aufruf · 124 Zeitlimit beim Warten erreicht`;
+  Exit-Code: 0 ok · 1 Fehler · 2 falscher Aufruf · 124 Zeitlimit beim Warten erreicht
+  Anleitung: ${path.join(__dirname, '..', 'AIOC-CTL.md')} (für Agenten: Muster, Warten, Fallstricke)`;
 
 const VALUE_FLAGS = new Set(['--lines', '--timeout', '--until']);
 const BOOL_FLAGS = new Set(['--all', '--answer', '--json', '--no-enter', '--wait', '--help', '-h']);

@@ -622,7 +622,9 @@
         const copy = document.createElement('button');
         copy.className = 'btn';
         copy.textContent = 'Link kopieren';
-        copy.title = 'Verbindungslink (mit Token und Zertifikats-Fingerprint) in die Zwischenablage';
+        copy.title = lan.trusted
+          ? 'Verbindungslink (mit Token) in die Zwischenablage'
+          : 'Verbindungslink (mit Token und Zertifikats-Fingerprint) in die Zwischenablage';
         copy.addEventListener('click', () => {
           navigator.clipboard?.writeText(link).then(() => { copy.textContent = 'Kopiert ✓'; setTimeout(() => (copy.textContent = 'Link kopieren'), 1500); }).catch(() => {});
         });
@@ -635,7 +637,13 @@
         qr.addEventListener('click', () => {
           const p = $('lanqr');
           p.hidden = !p.hidden;
-          if (!p.hidden) { $('lanqrimg').innerHTML = lan.qr; $('lanqrlink').textContent = link; $('settings').hidden = true; }
+          if (!p.hidden) {
+            // Vertrauenswuerdiges Zertifikat (z. B. Tailscale): kein WLAN-Zwang, keine Zertifikatswarnung
+            $('lanqrhint').textContent = lan.trusted
+              ? `QR-Code scannen – das Gerät muss ${lan.host} erreichen (bei Tailscale: im selben Tailnet). Dann „App installieren" bzw. „Zum Home-Bildschirm". Der Link enthält das Token, also privat halten.`
+              : 'Gleiches WLAN, QR-Code scannen, Zertifikat einmal bestätigen, dann „Zum Home-Bildschirm" – der Link enthält Token und Zertifikats-Fingerprint, also privat halten.';
+            $('lanqrimg').innerHTML = lan.qr; $('lanqrlink').textContent = link; $('settings').hidden = true;
+          }
         });
         el.appendChild(qr);
       }
@@ -648,7 +656,7 @@
       const on = document.createElement('button');
       on.className = 'btn dim';
       on.textContent = 'LAN an';
-      on.title = 'Zugriff aus dem Netzwerk per HTTPS/WSS freigeben (Token + Zertifikats-Fingerprint im Link)';
+      on.title = 'Zugriff aus dem Netzwerk per HTTPS/WSS freigeben – der Verbindungslink enthält das Token';
       on.addEventListener('click', () => send({ t: 'lan', enabled: true }));
       el.appendChild(on);
     }

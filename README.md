@@ -19,8 +19,8 @@ The status is **not guessed from screen output**. Each agent reports it through 
 - **Exact status sources.** Claude Code hooks (via `--settings`), Codex hooks (via `-c`), a tiny Pi extension (via `-e`), the terminal title as a second, independent source, and an activity heuristic for plain shells. All of it is passed on the command line of the individual session.
 - **Daemon and window are separate.** A small background service owns the sessions. Closing the window — or crashing it, or updating Aioc — never kills an agent. Reopen the window and everything is still there, scrollback included.
 - **Survives reboots.** Session list and scrollback are persisted continuously. After a restart every session comes back as *"before restart"* with its full terminal content; one click resumes the agent's own conversation (`claude --resume`, `codex resume`, `pi --session`) using the IDs Aioc learned from the hooks. Only a turn that was mid-flight at shutdown is lost.
-- **Built for many sessions.** Split panes freely — right, down, as deep as you like, drag the dividers, zoom one pane to the full area. Plus folder groups you can collapse, sort by folder or by status, a resizable sidebar, remembered window position, and Windows-Terminal-style keys.
-- **The UI is a web app.** The daemon serves it; Electron is just the shell around it. Switch on **LAN** and the same UI runs on a laptop, a tablet (as a PWA) or a second PC — over HTTPS/WSS with a pinned certificate (see [Use it from another machine](#use-it-from-another-machine-lan)).
+- **Built for many sessions.** Split panes freely — right, down, as deep as you like, drag the dividers, zoom one pane to the full area. Plus folder groups you can collapse, sorting by folder, status or agent type, drag-and-drop ordering, a resizable sidebar, remembered window position, and Windows-Terminal-style keys.
+- **The UI is a web app.** The daemon serves it; Electron is just the shell around it. Switch on **LAN** and the same UI runs on a laptop, a tablet (as a PWA) or a second PC — over HTTPS/WSS, with a pinned self-signed certificate or a trusted one from Tailscale (see [Use it from another machine](#use-it-from-another-machine-lan)).
 - **Every pane has its own header.** In split view each terminal carries name, agent, folder, branch, session ID and its own actions. Agents show up as small icons (Claude, OpenAI for Codex, Pi, PowerShell) — in the list right-aligned, with the name as tooltip.
 - **Branch at a glance.** Folder headings and pane headers show the git branch and the working tree, e.g. `⎇ main ±3 ↑1` (changes · ahead · behind). Read-only, and always with `--no-optional-locks`, so Aioc never takes the index lock away from an agent that is committing.
 - **Names stay in sync, both ways.** Rename a session inside Claude Code or Codex with `/rename` and Aioc picks it up; rename it in Aioc with F2 and Aioc sets it in the agent. Without a name of your own, Aioc follows Claude's own session title too (see [Session names](#session-names)).
@@ -83,7 +83,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - Drag the divider to resize the sidebar; double-click resets it. The same works for the dividers between panes — double-click puts them back to half and half.
 - Each pane header carries its own buttons: **◧** split right, **⬒** split down, **⤢** zoom, **✕** close the pane.
 - Double-click a session name (in the sidebar or in the header) to rename it.
-- **Notifications.** When a session starts waiting for you or finishes, Aioc shows a notification — but only when the window is in the background or that session is not open in a pane, so it never fires for what you are already looking at. Clicking it brings the window forward and loads that session into the focused pane. Switch it off per device under ⚙. In the local window this is a Windows toast (listed as *Aioc* under *Settings → Notifications*); remote windows use the browser's own notifications and ask for permission once.
+- **Notifications.** When a session starts waiting for you or finishes, Aioc shows a notification — but only when the window is in the background or that session is not open in a pane, so it never fires for what you are already looking at. Clicking it brings the window forward and loads that session into the focused pane. Switch it off per device under ⚙. In the local window this is a Windows toast (listed as *Aioc* under *Settings → Notifications*); remote windows in a desktop browser use the browser's own notifications and ask for permission once. Chrome on Android shows none yet: it accepts notifications only from a service worker, not from the page itself.
 - **Start menu and taskbar.** On start the local window creates (and keeps up to date) a start menu shortcut *Aioc* carrying Aioc's app ID and icon. Windows takes the taskbar button, its icon and the name in the notification settings from that shortcut — without it every Electron window would be lumped under Electron's atom. It also makes Aioc startable from Windows search.
 - **⚙ Background image and per-device settings:** pick an image (stored by the daemon, so remote windows show it too), and set opacity and terminal font size for *this* device — like `backgroundImage` in Windows Terminal.
 - **Close** ends the process (asks first). **Remove** deletes an exited session and its scrollback from the list.
@@ -125,6 +125,8 @@ Titles that are not names stay out: `Claude Code`, Codex' bare folder title, the
 
 Sessions can be driven from the command line — by your own scripts, and by the agents themselves. `bin\` is prepended to the `PATH` of Aioc sessions only, so inside any Aioc session `aioc-ctl` is simply there; nothing is installed globally and no agent configuration is touched.
 
+The agents get a guide of their own: [AIOC-CTL.md](AIOC-CTL.md) explains the commands, how waiting works and the pitfalls (quoting, `self`, answering another session's dialog). `aioc-ctl --help` prints its path, so an agent inside Aioc finds it without being told.
+
 ```powershell
 aioc-ctl list                                   # all sessions with status, folder and branch
 aioc-ctl read <session> [--lines N|--all]       # terminal content as plain text
@@ -156,7 +158,7 @@ The window is only a client, so it can run somewhere else — a laptop, a tablet
 2. Allow the port in Windows Firewall once (as administrator): `netsh advfirewall firewall add rule name="Aioc LAN" dir=in action=allow protocol=TCP localport=43443`
 3. Click **Link kopieren**. The link carries the access token and the certificate fingerprint, e.g. `https://192.168.1.10:43443/?token=…#fp=…` (no `&` or `%`, so it survives an unquoted command line).
 4. On the other device:
-   - **Phone / tablet:** click **QR fürs Handy**, scan the code (same Wi-Fi), accept the self-signed certificate once, and use *Add to Home Screen* (works on iOS; Chrome on Android refuses to *install* an app over a self-signed certificate — see [A trusted certificate](#a-trusted-certificate-tailscale)) — Aioc ships a PWA manifest whose start URL carries the token, so the installed app opens straight into your sessions. On narrow screens Aioc shows the session list first; tapping a session opens its terminal full-screen, **‹ Liste** goes back.
+   - **Phone / tablet:** click **QR fürs Handy** and scan the code. With the generated certificate the phone has to be in the same Wi-Fi and you accept the certificate once; *Add to Home Screen* then works on iOS, but Chrome on Android refuses to *install* an app over a self-signed certificate. With a [trusted certificate](#a-trusted-certificate-tailscale) there is no warning, Chrome installs Aioc as an app, and a phone in your tailnet reaches it from anywhere. Aioc ships a PWA manifest whose start URL carries the token, so the installed app opens straight into your sessions. On narrow screens Aioc shows the session list first; tapping a session opens its terminal full-screen, **‹ Liste** goes back.
    - **Second PC with this repo:** `aioc-remote.cmd "<link>"` opens an Aioc window that pins the daemon's certificate to the fingerprint from the link — no certificate warning, and any other certificate is rejected.
 
 Pasting an image from a remote window works too: the image travels over the WebSocket to the daemon, is placed in the clipboard of the daemon machine and handed to the agent there — the same path a local `Ctrl+V` takes. **LAN aus** closes the listener and drops remote clients; local use continues untouched.
@@ -171,6 +173,8 @@ tailscale cert <machine>.<tailnet>.ts.net
 ```
 
 Aioc picks up any `<name>.crt` + `<name>.key` pair in that folder, runs the LAN listener with it and hands out `https://<name>:43443/?token=…` — no fingerprint, no pinning, and `aioc-remote.cmd` simply validates it the normal way. Such certificates last about 90 days; run `tailscale cert` again and switch LAN off and on.
+
+The phone then only needs Tailscale switched on: it reaches that link wherever it is online, not just in your Wi-Fi, and the QR dialog in Aioc says so instead of asking you to accept a certificate.
 
 Do **not** use `tailscale serve` for this: requests from the tailnet would then reach the daemon as `127.0.0.1`, which is exactly what the hook endpoint and the control API treat as *local and therefore allowed*.
 
@@ -196,10 +200,11 @@ daemon/        the service: PTYs (node-pty/ConPTY), scrollback (headless xterm),
 daemon/hooks/  agent-hook.js (Claude/Codex relay), aioc-pi-ext.ts (Pi extension)
 cli/ + bin/    aioc-ctl — bin/ is prepended to the PATH of Aioc sessions
 ui/            the web app the daemon serves (vanilla JS + xterm.js)
+ui/agents/     agent icons; embed.js embeds them into style.css
 shell/         the Electron shell (starts the daemon if needed, loads the UI)
 ```
 
-State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\`, `daemon.json`, `window.json`, the generated `claude-settings.json`. Set `AIOC_HOME` (and `AIOC_DAEMON_PORT`) to run a second, fully isolated profile — handy for testing.
+State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\` (per session a checkpoint `<id>.txt` plus a journal `<id>.log` that new output is appended to), `daemon.json`, `window.json`, `ui-state.json` (recent folders), the background image, `tls\` (certificates) and the generated `claude-settings.json`. Set `AIOC_HOME` (and `AIOC_DAEMON_PORT`) to run a second, fully isolated profile — handy for testing.
 
 ## License
 
