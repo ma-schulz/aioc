@@ -21,7 +21,7 @@ The status is **not guessed from screen output**. Each agent reports it through 
 - **Survives reboots.** Session list and scrollback are persisted continuously. After a restart every session comes back as *"before restart"* with its full terminal content; one click resumes the agent's own conversation (`claude --resume`, `codex resume`, `pi --session`) using the IDs Aioc learned from the hooks. Only a turn that was mid-flight at shutdown is lost.
 - **Built for many sessions.** Split panes freely — right, down, as deep as you like, drag the dividers, zoom one pane to the full area. Plus folder groups you can collapse, sort by folder or by status, a resizable sidebar, remembered window position, and Windows-Terminal-style keys.
 - **The UI is a web app.** The daemon serves it; Electron is just the shell around it. Switch on **LAN** and the same UI runs on a laptop, a tablet (as a PWA) or a second PC — over HTTPS/WSS with a pinned certificate (see [Use it from another machine](#use-it-from-another-machine-lan)).
-- **Every pane has its own header.** In split view each terminal carries name, agent, folder, branch, session ID and its own actions.
+- **Every pane has its own header.** In split view each terminal carries name, agent, folder, branch, session ID and its own actions. Agents show up as small icons (Claude, OpenAI for Codex, Pi, PowerShell) — in the list right-aligned, with the name as tooltip.
 - **Branch at a glance.** Folder headings and pane headers show the git branch and the working tree, e.g. `⎇ main ±3 ↑1` (changes · ahead · behind). Read-only, and always with `--no-optional-locks`, so Aioc never takes the index lock away from an agent that is committing.
 - **Names stay in sync, both ways.** Rename a session inside Claude Code or Codex with `/rename` and Aioc picks it up; rename it in Aioc with F2 and Aioc sets it in the agent. Without a name of your own, Aioc follows Claude's own session title too (see [Session names](#session-names)).
 - **A control CLI for scripts and agents.** `aioc-ctl` lists sessions, reads a terminal as plain text, sends a prompt, answers a dialog and waits for the result — so one agent can hand work to another. See [Scripting](#scripting-aioc-ctl).
@@ -204,3 +204,5 @@ State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\`, `daemon.j
 ## License
 
 [MIT](LICENSE)
+
+The agent icons in `ui/agents/` identify the agents and remain the trademarks of their owners: the Claude mark from [Simple Icons](https://simpleicons.org) (CC0, recoloured to Claude's brand colour), the OpenAI mark from OpenAI's own favicon, the Pi mark from [pi.dev](https://pi.dev), and the PowerShell icon extracted from `pwsh.exe`.

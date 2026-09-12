@@ -822,11 +822,12 @@
       if (shortcut <= 20) b.title = shortcut <= 10 ? `Ctrl+${shortcut % 10}` : `Ctrl+Shift+${shortcut % 10}`;
       b.dataset.n = shortcut;
       b.dataset.id = s.id;
-      b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="grip" title="Ziehen: Reihenfolge im Ordner ändern">⠿</span><span class="loc"></span><span class="st"></span>`;
+      // Symbol ganz rechts, der Zieh-Griff links davon (er erscheint nur beim Überfahren)
+      b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="grip" title="Ziehen: Reihenfolge im Ordner ändern">⠿</span><span class="ag"></span><span class="loc"></span><span class="st"></span>`;
       b.querySelector('.ic').textContent = ICON[s.status] || '·';
       b.querySelector('.nm').textContent = s.name;
       b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
-      b.querySelector('.ag').textContent = s.agent;
+      setAgentIcon(b.querySelector('.ag'), s.agent);
       const st = b.querySelector('.st');
       st.title = `${wtree.dir}\n${s.detail || ''}`;
       st.textContent = s.detail || '';
@@ -866,6 +867,22 @@
     renderPanes();
     renderLan();
     $('recents').innerHTML = recents.map(r => `<option value="${r.replaceAll('"', '&quot;')}">`).join('');
+  }
+
+  // Kleines Agenten-Symbol statt des Namens; der Name bleibt als Tooltip und für Screenreader erhalten
+  const AGENT_ICON = { claude: '/agents/claude.svg', codex: '/agents/codex.svg', pi: '/agents/pi.svg', pwsh: '/agents/pwsh.png' };
+  function setAgentIcon(el, agent) {
+    if (el.dataset.agent === agent) return;
+    el.dataset.agent = agent;
+    el.title = agent;
+    el.replaceChildren();
+    const src = AGENT_ICON[agent];
+    if (!src) { el.textContent = agent; return; }
+    const img = document.createElement('img');
+    img.className = 'agi';
+    img.src = src;
+    img.alt = agent;
+    el.appendChild(img);
   }
 
   // Letzter Pfadteil - bei Worktrees genau deren Name (z. B. "7139_welle8_portale")
@@ -1031,7 +1048,7 @@
         const nm = head.querySelector('.nm');
         if (!nm.querySelector('input')) nm.textContent = s.name;
         nm.title = (s.title ? `Titel im Agenten: ${s.title}\n` : '') + 'Doppelklick: umbenennen';
-        head.querySelector('.ag').textContent = s.agent;
+        setAgentIcon(head.querySelector('.ag'), s.agent);
         // Kopfzeile zeigt, wo der Agent tatsächlich arbeitet; der Startordner steht dann im Tooltip
         const wtree = workTree(s);
         const cwdEl = head.querySelector('.cwd');

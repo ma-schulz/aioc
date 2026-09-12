@@ -59,7 +59,12 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .sess[aria-current="true"] { background: #232A36; border-color: #33405A; }
 .sess .ic { font-family: var(--mono); font-size: 13px; text-align: center; }
 .sess .nm { color: var(--white); overflow-wrap: anywhere; min-width: 0; }
-.sess .ag { font-family: var(--mono); font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+/* Agenten-Symbol (rechtsbündig); unbekannte Agenten fallen auf den Namen als Text zurück */
+.sess .ag, .phead .ag { display: inline-flex; align-items: center; justify-content: flex-end; font-family: var(--mono); font-size: 10.5px; color: var(--dim); }
+/* Feste Spalten: Symbol immer ganz rechts, auch wenn der Griff (Status-/Typsortierung) ausgeblendet ist */
+.sess .grip { grid-column: 3; grid-row: 1; }
+.sess .ag { grid-column: 4; grid-row: 1; }
+.agi { width: 16px; height: 16px; display: block; flex: none; }
 .sess .grip { font-family: var(--mono); font-size: 12px; color: var(--dim); opacity: 0; cursor: grab; touch-action: none; }
 .sess:hover .grip, .sess.dragging .grip { opacity: .55; }
 .sess.dragging { background: #232A36; border-color: #3D4657; cursor: grabbing; }
@@ -88,7 +93,6 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .phead .cwd { flex: 0 10 auto; }
 .phead .sid { flex: 0 20 auto; }
 .phead .nm input.rename { background: var(--bg); color: var(--white); border: 1px solid #3D4657; border-radius: 4px; padding: 1px 6px; font: inherit; width: 260px; }
-.phead .ag { font-family: var(--mono); font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .phead .cwd { font-family: var(--mono); font-size: 11.5px; color: var(--dim); }
 .phead .sid { font-family: var(--mono); font-size: 11px; color: #5C6470; }
 .phead .lim { font-size: 11px; color: var(--yellow); white-space: nowrap; }
@@ -165,7 +169,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .55); }
 #newform label { color: var(--dim); }
 #newform .f { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 5px 8px; font-family: var(--mono); font-size: 12.5px; color: var(--fg); }
 #newform .seg { display: flex; gap: 4px; }
-#newform .seg button { border: 1px solid var(--line); background: transparent; border-radius: 4px; padding: 3px 10px; color: var(--dim); cursor: pointer; }
+#newform .seg button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: transparent; border-radius: 4px; padding: 3px 10px; color: var(--dim); cursor: pointer; }
 #newform .seg button.on { background: #2A3140; color: var(--white); border-color: #3D4657; }
 #newform .foot { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
 :focus-visible { outline: 2px solid var(--cyan); outline-offset: 1px; }
