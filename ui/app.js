@@ -240,8 +240,9 @@
   });
   // ---------- Benachrichtigungen ----------
   // Gemeldet werden die Wechsel nach "Rückfrage" und nach "fertig" - aber nur, wenn das Fenster nicht
-  // im Vordergrund ist oder die Session in keinem Pane liegt. Im Electron-Fenster macht Windows daraus
-  // einen Toast (AppUserModelID setzt shell/main.js), im Browser und auf dem Handy meldet der Browser.
+  // im Vordergrund ist oder die Session nicht zu sehen ist. Im Electron-Fenster macht Windows daraus
+  // einen Toast (AppUserModelID setzt shell/main.js), im Browser meldet der Browser. Chrome auf Android
+  // verbietet den Notification-Konstruktor (TypeError) - dort geht die Meldung über den Service Worker.
   let notifyOn = true;
   try { notifyOn = localStorage.getItem('aioc-toasts') !== '0'; } catch {}
   const lastStatus = new Map();
@@ -264,7 +265,43 @@
     updateNotifyHint();
   }
 
+  // Klick auf eine Service-Worker-Meldung, als Aioc nicht offen war: der SW startet es mit ?open=<id>
+  let openOnStart = params.get('open');
+  if (openOnStart) {
+    params.delete('open');
+    const rest = params.toString();
+    history.replaceState(null, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+  }
+
+  function openFromNotification(id) {
+    window.aioc?.focusWindow?.();
+    window.focus();
+    if (sessionOf(id)) assignToPane(focused, id);
+  }
+
+  // Auf dem Handy ist nur das fokussierte Pane zu sehen - und auch das nur, solange nicht die Liste offen ist
+  const isShown = id => (MOBILE.matches
+    ? document.body.classList.contains('show-term') && activeId() === id
+    : panes.some(p => p.id === id));
+
+  function showNotification(title, body, id) {
+    const tag = 'aioc-' + id; // neue Meldung ersetzt die alte je Session
+    try {
+      const n = new Notification(title, { body, tag });
+      n.onclick = () => { openFromNotification(id); n.close(); };
+      return;
+    } catch { /* Android: nur über den Service Worker */ }
+    navigator.serviceWorker?.getRegistration()
+      .then(reg => reg?.active && reg.showNotification(title, { body, tag, renotify: true, icon: '/icon-192.png', data: { id } }))
+      .catch(() => {});
+  }
+
   function notifyChanges(next, first) {
+    if (first && openOnStart) {
+      const id = openOnStart;
+      openOnStart = null;
+      setTimeout(() => openFromNotification(id)); // erst wenn Sessions und Layout übernommen sind
+    }
     for (const s of next) {
       const before = lastStatus.get(s.id);
       lastStatus.set(s.id, s.status);
@@ -272,20 +309,17 @@
       if (first || before === undefined || before === s.status) continue;
       if (!notifyOn || !NOTIFY[s.status]) continue;
       if (typeof Notification === 'undefined' || Notification.permission !== 'granted') continue;
-      if (document.hasFocus() && panes.some(p => p.id === s.id)) continue; // liegt sichtbar vor dir
+      if (document.hasFocus() && isShown(s.id)) continue; // liegt sichtbar vor dir
       const [title, body] = NOTIFY[s.status](s);
-      try {
-        const n = new Notification(title, { body, tag: 'aioc-' + s.id }); // tag: neuer Toast ersetzt den alten je Session
-        n.onclick = () => {
-          window.aioc?.focusWindow?.();
-          window.focus();
-          assignToPane(focused, s.id);
-          n.close();
-        };
-      } catch { /* Browser ohne Benachrichtigungen */ }
+      showNotification(title, body, s.id);
     }
     for (const id of [...lastStatus.keys()]) if (!next.some(s => s.id === id)) lastStatus.delete(id);
   }
+
+  // Klick auf eine Service-Worker-Meldung bei offenem Fenster (ui/sw.js schickt die Session)
+  navigator.serviceWorker?.addEventListener('message', e => {
+    if (e.data?.t === 'open' && e.data.id) openFromNotification(e.data.id);
+  });
 
   $('toasts').checked = notifyOn;
   $('toasts').addEventListener('change', () => {
@@ -320,6 +354,50 @@
   });
 
   // ---------- Terminals ----------
+  // Handy-Tastaturen (Gboard & Co.) schreiben per Wortbildung, Autokorrektur und Vorschlag in das
+  // versteckte Eingabefeld von xterm und melden ihre Tasten nur als keyCode 229. xterm rechnet die
+  // Änderung dann per value.replace(alt, '') aus: ersetzt ein Vorschlag ein früheres Wort, steckt der
+  // alte Text nicht mehr im neuen, und xterm schickt den ganzen Inhalt seit dem letzten Enter noch
+  // einmal. Auf Touch-Geräten übernimmt Aioc diese Eingaben: Feldinhalt mit dem schon Gesendeten
+  // vergleichen, Rückschritte bis zur ersten Abweichung, dann der neue Rest. Echte Tasten (Enter,
+  // Esc, Hardware-Tastatur) verarbeitet weiter xterm - danach fängt das Feld leer von vorn an.
+  const COARSE_POINTER = window.matchMedia('(pointer: coarse)');
+  function installTouchInput(wrap, term) {
+    const ta = wrap.querySelector('.xterm-helper-textarea');
+    if (!ta) return;
+    let sent = ''; // Inhalt des Eingabefelds, der schon beim Terminal angekommen ist
+    let composing = false;
+    const resync = () => setTimeout(() => { sent = ta.value; }, 0);
+    // Eine echte Taste schickt xterm, ohne dass sie im Feld landet - danach passt das Feld nicht mehr
+    // zur Terminalzeile, also frisch anfangen (nicht mitten in einer Wortbildung)
+    const restart = () => setTimeout(() => { if (!composing) ta.value = ''; sent = ta.value; }, 0);
+    // Capture am Wrapper: läuft vor den Listenern, die xterm am Eingabefeld selbst hat
+    const listen = (type, fn) => wrap.addEventListener(type, ev => {
+      if (COARSE_POINTER.matches && ev.target === ta) fn(ev);
+    }, true);
+    listen('compositionstart', ev => { composing = true; ev.stopPropagation(); });
+    listen('compositionupdate', ev => ev.stopPropagation());
+    listen('compositionend', ev => { composing = false; ev.stopPropagation(); });
+    listen('keydown', ev => {
+      if (ev.keyCode === 229 || ev.key === 'Unidentified') ev.stopPropagation(); // der Text folgt als input
+      else restart();
+    });
+    listen('paste', resync); // Einfügen schickt xterm selbst und leert das Feld danach
+    listen('blur', resync);
+    listen('input', ev => {
+      ev.stopPropagation();
+      const value = ta.value;
+      if (/^insertFrom/.test(ev.inputType || '')) { sent = value; return; } // Einfügen/Ziehen: schon unterwegs
+      const before = [...sent], after = [...value];
+      let same = 0;
+      while (same < before.length && same < after.length && before[same] === after[same]) same++;
+      sent = value;
+      const data = '\x7f'.repeat(before.length - same) + after.slice(same).join('').replace(/\n/g, '\r');
+      if (data) term.input(data);
+      if (value.endsWith('\n')) { ta.value = ''; sent = ''; } // Zeilenumbruch der Tastatur = Enter
+    });
+  }
+
   function ensureTerm(id) {
     let t = terms.get(id);
     if (t) return t;
@@ -338,6 +416,7 @@
     term.open(wrap);
     try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
     term.onData(d => send({ t: 'input', id, d }));
+    installTouchInput(wrap, term);
     term.attachCustomKeyEventHandler(ev => {
       if (ev.type !== 'keydown') return true;
       if (ev.key === 'Enter' && ev.shiftKey && !ev.ctrlKey && !ev.altKey) {
