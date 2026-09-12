@@ -41,11 +41,15 @@ class GitWatcher {
     const cur = this.info.get(k);
     if (!k || this.busy.has(k) || (cur && Date.now() - cur.at < minAge)) return;
     this.busy.add(k);
-    execFile('git', ['--no-optional-locks', '-C', cwd, 'status', '--porcelain=v2', '--branch'],
+    // Erst die Wurzel des Worktrees: daran erkennt die Oberflaeche, ob ein Agent in einem anderen
+    // Worktree arbeitet als dem seiner Gruppe - ein Unterordner desselben Worktrees zaehlt nicht.
+    execFile('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], { windowsHide: true, timeout: 10000 }, (rootErr, rootOut) => {
+      const root = rootErr ? null : String(rootOut).trim() || null;
+      execFile('git', ['--no-optional-locks', '-C', cwd, 'status', '--porcelain=v2', '--branch'],
       { windowsHide: true, timeout: 20000, maxBuffer: 32 * 1024 * 1024 }, (err, stdout) => {
         this.busy.delete(k);
         let next;
-        if (!err) next = parseStatus(stdout);
+        if (!err) next = { ...parseStatus(stdout), root };
         // Zeitlimit/Riesenausgabe: alten Stand behalten statt "kein Repo" anzuzeigen
         else if (err.killed || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') next = cur ? { ...cur } : { repo: false };
         else next = { repo: false }; // kein Repo, Ordner fehlt oder git nicht im PATH
@@ -54,6 +58,7 @@ class GitWatcher {
         this.info.set(k, next);
         if (!same && this.onChange) this.onChange();
       });
+    });
   }
 
   get(cwd) {

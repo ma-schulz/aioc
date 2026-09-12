@@ -142,10 +142,12 @@ async function cmdList(opt) {
   if (opt.json) return out(JSON.stringify(sessions, null, 2));
   if (!sessions.length) return out('Keine Sessions.');
   const self = process.env.AIOC_SESSION;
-  table(['ID', 'STATUS', 'AGENT', 'NAME', 'ORDNER', 'DETAIL'], sessions.map(s => [
-    s.id + (s.id === self ? '*' : ''), s.status, s.agent, s.name,
-    s.cwd + (s.git ? ` [${gitShort(s.git)}]` : ''), s.detail,
-  ]));
+  table(['ID', 'STATUS', 'AGENT', 'NAME', 'ORDNER', 'DETAIL'], sessions.map(s => {
+    // Ordner, in dem der Agent wirklich arbeitet (per Hook gemeldet), sonst der Startordner
+    const dir = s.workGit?.root || s.workCwd || s.cwd;
+    const g = s.workCwd ? s.workGit : s.git;
+    return [s.id + (s.id === self ? '*' : ''), s.status, s.agent, s.name, dir + (g ? ` [${gitShort(g)}]` : ''), s.detail];
+  }));
   if (sessions.some(s => s.id === self)) out('\n* = diese Session');
   return undefined;
 }

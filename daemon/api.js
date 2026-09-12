@@ -45,6 +45,7 @@ function createApi({ mgr, info, git, isLoopback }) {
       id: e.id, name: e.name, agent: e.agent, cwd: e.cwd, status: e.status, detail: e.detail || '',
       running: !!s.proc, unread: !!e.unread, seq: e.statusSeq || 0, agentSessionId: e.agentSessionId || null,
       title: e.title || '', nameSource: e.nameSource || 'auto',
+      workCwd: e.workCwd || null, workGit: e.workCwd ? git.get(e.workCwd) : null,
       git: git.get(e.cwd),
     };
   }

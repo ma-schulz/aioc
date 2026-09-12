@@ -90,7 +90,13 @@ const mgr = new SessionManager(PORT, {
   },
   onChange: () => broadcastSessions(),
   // Statuswechsel: wartende `aioc-ctl wait` bedienen, Git-Stand zeitnah nachziehen (Agent koennte committet haben)
-  onStatus: entry => { api.checkWaiters(); git.refresh(entry.cwd, 3000); },
+  onStatus: entry => {
+    api.checkWaiters();
+    git.refresh(entry.cwd, 3000);
+    if (entry.workCwd) git.refresh(entry.workCwd, 3000);
+  },
+  // Agent arbeitet jetzt woanders (Hook-cwd): dessen Git-Stand sofort holen
+  onWorkDir: entry => git.refresh(entry.workCwd, 0),
   onGone: id => { for (const ws of wss.clients) send(ws, { t: 'gone', id }); api.checkWaiters(); },
 });
 mgr.adoptSaved();
@@ -139,7 +145,7 @@ function lanState() {
 }
 
 function stateMsg(t) {
-  return { t, sessions: mgr.toClient().map(e => ({ ...e, git: git.get(e.cwd) })), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
+  return { t, sessions: mgr.toClient().map(e => ({ ...e, git: git.get(e.cwd), workGit: e.workCwd ? git.get(e.workCwd) : null })), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
 }
 
 function broadcastSessions() {
@@ -336,7 +342,10 @@ setInterval(() => { try { mgr.flushNow(); } catch {} }, 30000).unref();
 // jedem Statuswechsel (onStatus)
 function refreshGit() {
   const cwds = new Map();
-  for (const s of mgr.sessions.values()) cwds.set(s.entry.cwd, cwds.get(s.entry.cwd) || !!s.proc);
+  for (const s of mgr.sessions.values()) {
+    cwds.set(s.entry.cwd, cwds.get(s.entry.cwd) || !!s.proc);
+    if (s.entry.workCwd) cwds.set(s.entry.workCwd, cwds.get(s.entry.workCwd) || !!s.proc);
+  }
   for (const [cwd, live] of cwds) git.refresh(cwd, live ? 15000 : 120000);
   git.prune([...cwds.keys()]);
 }

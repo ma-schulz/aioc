@@ -234,6 +234,13 @@ class Session {
     const ev = payload.hook_event_name || '';
     const sid = payload.session_id;
     if (sid && typeof sid === 'string') this.entry.agentSessionId = sid;
+    // Arbeitsordner des Agenten: Claude und Codex melden ihn in jedem Hook. Er kann vom Startordner
+    // abweichen, etwa wenn ein Worker in einen Worktree gewechselt ist.
+    if (typeof payload.cwd === 'string' && payload.cwd && payload.cwd !== this.entry.workCwd) {
+      this.entry.workCwd = payload.cwd;
+      this.mgr.emitWorkDir(this.entry);
+      this.mgr.persistAndBroadcast();
+    }
     switch (ev) {
       case 'SessionStart':
         if (this.entry.status === 'starting') this.setStatus('idle', 'bereit', 'hook');
@@ -477,15 +484,18 @@ class Session {
 }
 
 class SessionManager {
-  constructor(port, { onData, onChange, onStatus, onGone }) {
+  constructor(port, { onData, onChange, onStatus, onWorkDir, onGone }) {
     this.port = port;
     this.sessions = new Map();
     this.feed = [];
     this.onData = onData;
     this.onChange = onChange;
     this.onStatus = onStatus;
+    this.onWorkDir = onWorkDir;
     this.onGone = onGone;
   }
+
+  emitWorkDir(entry) { if (this.onWorkDir) this.onWorkDir(entry); }
 
   adoptSaved() {
     for (const entry of state.loadSessions()) {
@@ -558,14 +568,14 @@ class SessionManager {
     this.persistAndBroadcast();
   }
 
-  // Neuer Platz in der Sidebar (per Drag gesetzt): danach den Ordner sauber durchnummerieren, damit
-  // die Werte nicht mit jeder Verschiebung weiter zusammenruecken
+  // Neuer Platz in der Sidebar (per Drag gesetzt): danach ALLE Sessions durchnummerieren, damit die
+  // Werte nicht zusammenruecken. Global statt je Startordner, weil Gruppen dem tatsaechlichen
+  // Arbeitsort folgen und Sessions verschiedener Startordner mischen - das erhaelt jede Reihenfolge.
   setOrder(id, order) {
     const s = this.sessions.get(id);
     if (!s || typeof order !== 'number' || !Number.isFinite(order)) return;
     s.entry.order = order;
     [...this.sessions.values()]
-      .filter(x => x.entry.cwd === s.entry.cwd)
       .sort((a, b) => (a.entry.order ?? 0) - (b.entry.order ?? 0) || a.entry.createdAt - b.entry.createdAt)
       .forEach((x, i) => { x.entry.order = (i + 1) * 1000; });
     this.persistAndBroadcast();

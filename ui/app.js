@@ -145,6 +145,7 @@
 
   let sortMode = 'ordner', collapsed = new Set();
   try { sortMode = localStorage.getItem('aioc-sort') || 'ordner'; } catch {}
+  if (!['ordner', 'status', 'typ'].includes(sortMode)) sortMode = 'ordner';
   try { collapsed = new Set(JSON.parse(localStorage.getItem('aioc-collapsed') || '[]')); } catch {}
   const persistLocal = () => {
     try {
@@ -653,14 +654,39 @@
     }
   }
 
+  const AGENT_ORDER = { claude: 0, codex: 1, pi: 2, pwsh: 3 };
+  const SORT_LABEL = { ordner: 'Ordner', status: 'Status', typ: 'Typ' };
+
+  // Wo arbeitet die Session tatsächlich? Claude und Codex melden ihren Arbeitsordner mit jedem Hook
+  // (workCwd) - er weicht vom Startordner ab, sobald ein Worker in einen anderen Worktree wechselt.
+  // Maßgeblich ist die Worktree-Wurzel: ein Unterordner desselben Worktrees ist kein anderer Ort.
+  // Danach richten sich Gruppe, Überschrift und Pane-Kopf - nicht nach dem Startordner.
+  const normPath = p => String(p || '').replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  function workTree(s) {
+    const start = s.git?.root || s.cwd;
+    let dir = start, git = s.git || null;
+    if (s.workCwd) {
+      const work = normPath(s.workCwd), base = normPath(start);
+      if (s.workGit) { dir = s.workGit.root || s.workCwd; git = s.workGit; }
+      // Git-Stand des gemeldeten Ordners noch unterwegs: ein Unterordner bleibt so lange in seiner Gruppe
+      else if (work !== base && !work.startsWith(base + '/')) { dir = s.workCwd; git = null; }
+    }
+    return { dir, key: normPath(dir), git, moved: normPath(dir) !== normPath(start) };
+  }
+
+  // Zugeklappte Gruppen, verglichen über den normalisierten Pfad (ältere Einträge in anderer Schreibweise passen weiter)
+  const isCollapsed = key => [...collapsed].some(c => normPath(c) === key);
+  function toggleCollapsed(key) {
+    const hits = [...collapsed].filter(c => normPath(c) === key);
+    if (hits.length) hits.forEach(c => collapsed.delete(c)); else collapsed.add(key);
+  }
+
   function sortedSessions() {
     const list = sessions.filter(FILTERS[filter] || FILTERS.all);
-    if (sortMode === 'status') {
-      return [...list].sort((a, b) =>
-        (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) ||
-        a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
-    }
-    return list; // Server liefert bereits nach Ordner + Erstellzeit sortiert
+    const byPlace = (a, b) => workTree(a).key.localeCompare(workTree(b).key) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt);
+    if (sortMode === 'status') return [...list].sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || byPlace(a, b));
+    if (sortMode === 'typ') return [...list].sort((a, b) => (AGENT_ORDER[a.agent] ?? 9) - (AGENT_ORDER[b.agent] ?? 9) || byPlace(a, b));
+    return [...list].sort(byPlace); // Ordneransicht: gruppiert nach dem Ort, an dem die Session wirklich arbeitet
   }
 
   // ---------- Sidebar: Reihenfolge per Drag ----------
@@ -754,7 +780,7 @@
     document.title = c.waiting ? `(${c.waiting}!) Aioc` : 'Aioc';
 
     document.querySelectorAll('.chip[data-f]').forEach(ch => ch.setAttribute('aria-pressed', ch.dataset.f === filter ? 'true' : 'false'));
-    $('sortbtn').textContent = sortMode === 'status' ? '⇅ Status' : '⇅ Ordner';
+    $('sortbtn').textContent = '⇅ ' + (SORT_LABEL[sortMode] || 'Ordner');
     $('restoreall-wrap').hidden = sessions.filter(s => !s.running).length < 2;
 
     // Sidebar-Liste
@@ -765,31 +791,30 @@
     let grp = null;
     let shortcut = 0;
     vis.forEach(s => {
-      if (byGroup && s.cwd !== grp) {
-        grp = s.cwd;
-        const inGrp = vis.filter(x => x.cwd === grp);
+      const wtree = workTree(s);
+      if (byGroup && wtree.key !== grp) {
+        grp = wtree.key;
+        const key = grp;
+        const inGrp = vis.filter(x => workTree(x).key === key);
         const g = document.createElement('button');
         g.className = 'grp';
-        g.title = grp;
-        const isCol = collapsed.has(grp);
+        g.title = wtree.dir;
+        const isCol = isCollapsed(key);
         const badge = isCol ? inGrp.map(x => (x.status === 'waiting' ? '?' : x.unread ? '●' : '')).join('') : '';
         g.innerHTML = `<span class="arr">${isCol ? '▸' : '▾'}</span><span class="path"></span>`;
-        g.querySelector('.path').textContent = grp;
+        g.querySelector('.path').textContent = wtree.dir;
         const br = document.createElement('span');
         br.className = 'br';
-        if (fillGit(br, inGrp[0]?.git)) g.appendChild(br);
+        if (fillGit(br, wtree.git)) g.appendChild(br);
         if (badge) {
           const b = document.createElement('span');
           b.className = 'badge'; b.textContent = badge;
           g.appendChild(b);
         }
-        g.addEventListener('click', () => {
-          if (collapsed.has(g.title)) collapsed.delete(g.title); else collapsed.add(g.title);
-          persistLocal(); renderAll();
-        });
+        g.addEventListener('click', () => { toggleCollapsed(key); persistLocal(); renderAll(); });
         list.appendChild(g);
       }
-      if (byGroup && collapsed.has(s.cwd)) return;
+      if (byGroup && isCollapsed(grp)) return;
       shortcut++;
       const b = document.createElement('button');
       b.className = `sess ${s.status}${s.unread ? ' unread' : ''}`;
@@ -803,25 +828,26 @@
       b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
       b.querySelector('.ag').textContent = s.agent;
       const st = b.querySelector('.st');
-      st.title = `${s.cwd}\n${s.detail || ''}`;
-      // Je Zeile sichtbar, in welchem Worktree der Agent sitzt und wie es dort steht. In der
-      // Statussortierung fehlt der Ordnerkopf, dort steht der Worktree-Name zusätzlich davor.
-      if (sortMode === 'status') {
+      st.title = `${wtree.dir}\n${s.detail || ''}`;
+      // Worktree und dessen Stand je Zeile nur in den flachen Listen (Status, Typ). In der
+      // Ordneransicht steht beides in der Überschrift, und die Gruppe folgt dem echten Arbeitsort.
+      if (!byGroup) {
         const wt = document.createElement('span');
         wt.className = 'wt';
-        wt.textContent = folderName(s.cwd);
+        wt.textContent = folderName(wtree.dir);
         st.append(wt, ' ');
+        const br = document.createElement('span');
+        br.className = 'br';
+        if (fillGit(br, wtree.git)) st.append(br, ' ');
+        st.append('· ');
       }
-      const br = document.createElement('span');
-      br.className = 'br';
-      if (fillGit(br, s.git)) st.append(br, ' · ');
       st.append(s.detail || '');
       b.addEventListener('click', () => { if (Date.now() >= suppressClick) assignToPane(focused, s.id); });
       b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(s.id); });
       if (byGroup) {
         b.addEventListener('pointerdown', e => startDrag(e, b, s.id));
         b.querySelector('.grip').addEventListener('pointerdown', e => { e.stopPropagation(); startDrag(e, b, s.id, true); });
-      } else b.querySelector('.grip').hidden = true; // Statussortierung: die Folge macht der Status
+      } else b.querySelector('.grip').hidden = true; // Status-/Typsortierung: die Folge macht die Sortierung
       list.appendChild(b);
     });
 
@@ -1004,8 +1030,12 @@
         if (!nm.querySelector('input')) nm.textContent = s.name;
         nm.title = (s.title ? `Titel im Agenten: ${s.title}\n` : '') + 'Doppelklick: umbenennen';
         head.querySelector('.ag').textContent = s.agent;
-        head.querySelector('.cwd').textContent = s.cwd;
-        fillGit(head.querySelector('.br'), s.git);
+        // Kopfzeile zeigt, wo der Agent tatsächlich arbeitet; der Startordner steht dann im Tooltip
+        const wtree = workTree(s);
+        const cwdEl = head.querySelector('.cwd');
+        cwdEl.textContent = wtree.moved ? wtree.dir : s.cwd;
+        cwdEl.title = wtree.moved ? `Arbeitet in ${wtree.dir}\nGestartet in ${s.cwd}` : s.cwd;
+        fillGit(head.querySelector('.br'), wtree.git);
         head.querySelector('.sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
         head.querySelector('.lim').textContent = s.sizeInfo?.limitedBy ? '⧉ Größe: ' + s.sizeInfo.limitedBy : '';
         head.querySelector('.b-close').hidden = !s.running;
@@ -1085,7 +1115,7 @@
   document.querySelectorAll('.chip[data-f]').forEach(ch =>
     ch.addEventListener('click', () => { filter = ch.dataset.f; renderAll(); }));
   $('sortbtn').addEventListener('click', () => {
-    sortMode = sortMode === 'ordner' ? 'status' : 'ordner';
+    sortMode = { ordner: 'status', status: 'typ', typ: 'ordner' }[sortMode] || 'ordner';
     persistLocal(); renderAll();
   });
 
