@@ -588,12 +588,91 @@
     if (sortMode === 'status') {
       return [...list].sort((a, b) =>
         (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) ||
-        a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || a.createdAt - b.createdAt);
+        a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
     }
     return list; // Server liefert bereits nach Ordner + Erstellzeit sortiert
   }
 
+  // ---------- Sidebar: Reihenfolge per Drag ----------
+  // Gezogen wird nur in der Ordner-Ansicht und nur innerhalb der eigenen Gruppe - der Ordner gehört
+  // zur Session. Die Reihenfolge liegt beim Daemon, gilt also in jedem Fenster und auf jedem Gerät.
+  let drag = null, renderQueued = false, suppressClick = 0;
+
+  // Die Zeilen einer Ordnergruppe: alles zwischen zwei Überschriften
+  function groupRows(el) {
+    let first = el;
+    while (first.previousElementSibling && !first.previousElementSibling.classList.contains('grp')) first = first.previousElementSibling;
+    const rows = [];
+    for (let n = first; n && !n.classList.contains('grp'); n = n.nextElementSibling) rows.push(n);
+    return rows;
+  }
+
+  function startDrag(ev, el, id, fromGrip = false) {
+    if (drag || (ev.pointerType === 'mouse' && ev.button !== 0)) return;
+    if (!fromGrip && ev.pointerType !== 'mouse') return; // Finger: nur am Griff, sonst ließe sich die Liste nicht scrollen
+    const list = $('list');
+    const startY = ev.clientY;
+    let active = false, moved = false;
+    const begin = () => {
+      active = true;
+      drag = { id };
+      el.classList.add('dragging');
+      try { list.setPointerCapture(ev.pointerId); } catch {}
+    };
+    if (fromGrip) begin();
+    const move = e => {
+      if (!active) {
+        if (Math.abs(e.clientY - startY) < 6) return; // erst ab ein paar Pixeln, sonst stört es jeden Klick
+        begin();
+      }
+      e.preventDefault();
+      const rows = groupRows(el).filter(r => r !== el);
+      const before = rows.find(r => {
+        const b = r.getBoundingClientRect();
+        return e.clientY < b.top + b.height / 2;
+      });
+      if (before) {
+        if (el.nextElementSibling !== before) { before.parentNode.insertBefore(el, before); moved = true; }
+      } else {
+        const last = rows[rows.length - 1];
+        if (last && el.previousElementSibling !== last) { last.parentNode.insertBefore(el, last.nextElementSibling); moved = true; }
+      }
+    };
+    const end = () => {
+      list.removeEventListener('pointermove', move);
+      list.removeEventListener('pointerup', end);
+      list.removeEventListener('pointercancel', end);
+      if (!active) return;
+      el.classList.remove('dragging');
+      drag = null;
+      if (moved) {
+        commitOrder(el, id);
+        suppressClick = Date.now() + 300; // der Klick nach dem Ziehen soll keine Session laden
+      }
+      if (renderQueued) { renderQueued = false; renderAll(); }
+    };
+    list.addEventListener('pointermove', move);
+    list.addEventListener('pointerup', end);
+    list.addEventListener('pointercancel', end);
+  }
+
+  // Neuer Platz = Mitte zwischen den Nachbarn; der Daemon nummeriert die Gruppe danach durch
+  function commitOrder(el, id) {
+    const rows = groupRows(el);
+    const i = rows.indexOf(el);
+    const val = s => (typeof s?.order === 'number' ? s.order : 0);
+    const prev = i > 0 ? sessionOf(rows[i - 1].dataset.id) : null;
+    const next = i >= 0 && i < rows.length - 1 ? sessionOf(rows[i + 1].dataset.id) : null;
+    let order;
+    if (prev && next) order = (val(prev) + val(next)) / 2;
+    else if (next) order = val(next) - 1000;
+    else if (prev) order = val(prev) + 1000;
+    else return;
+    send({ t: 'order', id, order });
+  }
+
   function renderAll() {
+    if (drag) { renderQueued = true; return; } // während des Ziehens die Liste nicht neu aufbauen
     const c = { waiting: 0, running: 0, done: 0 };
     for (const s of sessions) {
       if (s.status === 'waiting') c.waiting++;
@@ -647,7 +726,8 @@
       b.setAttribute('aria-current', panes.some(p => p.id === s.id) ? 'true' : 'false');
       if (shortcut <= 9) b.title = `Ctrl+${shortcut}`;
       b.dataset.n = shortcut;
-      b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="st"></span>`;
+      b.dataset.id = s.id;
+      b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="grip" title="Ziehen: Reihenfolge im Ordner ändern">⠿</span><span class="st"></span>`;
       b.querySelector('.ic').textContent = ICON[s.status] || '·';
       b.querySelector('.nm').textContent = s.name;
       b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
@@ -661,8 +741,12 @@
         if (fillGit(br, s.git)) st.append(br, ' · ');
       }
       st.append(s.detail || '');
-      b.addEventListener('click', () => assignToPane(focused, s.id));
+      b.addEventListener('click', () => { if (Date.now() >= suppressClick) assignToPane(focused, s.id); });
       b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(s.id); });
+      if (byGroup) {
+        b.addEventListener('pointerdown', e => startDrag(e, b, s.id));
+        b.querySelector('.grip').addEventListener('pointerdown', e => { e.stopPropagation(); startDrag(e, b, s.id, true); });
+      } else b.querySelector('.grip').hidden = true; // Statussortierung: die Folge macht der Status
       list.appendChild(b);
     });
 

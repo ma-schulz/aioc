@@ -50,13 +50,17 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .br .bn { color: #3A96DD; }
 .br .bm { color: var(--fg); }
 .br .bm.conflict { color: var(--red); }
-.sess { display: grid; grid-template-columns: 18px 1fr auto; gap: 3px 8px; align-items: center; width: calc(100% - 12px); margin: 1px 6px; padding: 6px 10px 6px 12px; border-radius: 5px; border: 1px solid transparent; background: transparent; text-align: left; cursor: pointer; }
+.sess { display: grid; grid-template-columns: 18px 1fr auto auto; gap: 3px 8px; align-items: center; width: calc(100% - 12px); margin: 1px 6px; padding: 6px 10px 6px 12px; border-radius: 5px; border: 1px solid transparent; background: transparent; text-align: left; cursor: pointer; }
 .sess:hover { background: #1E232B; }
 .sess[aria-current="true"] { background: #232A36; border-color: #33405A; }
 .sess .ic { font-family: var(--mono); font-size: 13px; text-align: center; }
 .sess .nm { color: var(--white); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sess .ag { font-family: var(--mono); font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
-.sess .st { grid-column: 2 / 4; font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sess .grip { font-family: var(--mono); font-size: 12px; color: var(--dim); opacity: 0; cursor: grab; touch-action: none; }
+.sess:hover .grip, .sess.dragging .grip { opacity: .55; }
+.sess.dragging { background: #232A36; border-color: #3D4657; cursor: grabbing; }
+@media (pointer: coarse) { .sess .grip { opacity: .45; } }
+.sess .st { grid-column: 2 / 5; font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sess.running .ic, .sess.starting .ic { color: var(--cyan); }
 .sess.waiting .ic { color: var(--yellow); animation: pulse 1.2s ease-in-out infinite; }
 .sess.waiting .st { color: var(--yellow); }

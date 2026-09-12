@@ -249,6 +249,7 @@ wss.on('connection', ws => {
         case 'dispose': mgr.dispose(m.id); break;
         case 'rename': mgr.rename(m.id, m.name); break;
         case 'markRead': mgr.markRead(m.id); break;
+        case 'order': mgr.setOrder(m.id, m.order); break;
         case 'lan':
           if (m.enabled) startLan().catch(err => { mgr.pushFeed('LAN-Zugriff konnte nicht gestartet werden: ' + err.message); broadcastSessions(); });
           else stopLan();

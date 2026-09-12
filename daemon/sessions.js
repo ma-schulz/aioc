@@ -476,6 +476,7 @@ class SessionManager {
       }
       entry.unread = false;
       entry.sizeInfo = null;
+      if (typeof entry.order !== 'number') entry.order = entry.createdAt || Date.now();
       // Altbestand ohne Vermerk: ein vom Standard abweichender Name gilt als selbst vergeben
       if (!entry.nameSource) entry.nameSource = entry.name === defaultName(entry) ? 'auto' : 'user';
       this.sessions.set(entry.id, new Session(this, entry));
@@ -489,7 +490,7 @@ class SessionManager {
       id, agent, cwd, args: args || '',
       name: name || defaultName({ agent, cwd }),
       nameSource: name ? 'user' : 'auto', nameAt: name ? Date.now() : 0,
-      createdAt: Date.now(), status: 'starting', detail: 'startet…', statusSource: 'system',
+      createdAt: Date.now(), order: Date.now(), status: 'starting', detail: 'startet…', statusSource: 'system',
       unread: false, title: '', agentSessionId: null, exitedAt: null, sizeInfo: null,
     };
     const s = new Session(this, entry);
@@ -534,6 +535,19 @@ class SessionManager {
     s.entry.nameSource = 'user'; // ab jetzt nicht mehr automatisch nachziehen
     s.entry.nameAt = Date.now();
     if (toAgent) s.renameInAgent(s.entry.name);
+    this.persistAndBroadcast();
+  }
+
+  // Neuer Platz in der Sidebar (per Drag gesetzt): danach den Ordner sauber durchnummerieren, damit
+  // die Werte nicht mit jeder Verschiebung weiter zusammenruecken
+  setOrder(id, order) {
+    const s = this.sessions.get(id);
+    if (!s || typeof order !== 'number' || !Number.isFinite(order)) return;
+    s.entry.order = order;
+    [...this.sessions.values()]
+      .filter(x => x.entry.cwd === s.entry.cwd)
+      .sort((a, b) => (a.entry.order ?? 0) - (b.entry.order ?? 0) || a.entry.createdAt - b.entry.createdAt)
+      .forEach((x, i) => { x.entry.order = (i + 1) * 1000; });
     this.persistAndBroadcast();
   }
 
@@ -586,7 +600,7 @@ class SessionManager {
   toClient() {
     return [...this.sessions.values()]
       .map(s => ({ ...s.entry, running: !!s.proc }))
-      .sort((a, b) => a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || a.createdAt - b.createdAt);
+      .sort((a, b) => a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
   }
 
   saveAllNow() {

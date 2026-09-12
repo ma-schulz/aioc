@@ -77,6 +77,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - Click a pane to focus it; the sidebar always loads sessions into the focused pane.
 - Click a folder heading to collapse the group. Collapsed groups show `?` (waiting) and `●` (unread) as a hint.
 - The `⇅` switch sorts by folder (grouped) or by status (waiting first, flat).
+- Drag a session by its `⠿` handle (or anywhere in the row, with the mouse) to reorder it inside its folder group — the folder belongs to the session, so it stays in its group. The order lives in the daemon, so every window and every device shows the same one. Sorting by status is by status, so dragging is off there.
 - Drag the divider to resize the sidebar; double-click resets it. The same works for the dividers between panes — double-click puts them back to half and half.
 - Each pane header carries its own buttons: **◧** split right, **⬒** split down, **⤢** zoom, **✕** close the pane.
 - Double-click a session name (in the sidebar or in the header) to rename it.
