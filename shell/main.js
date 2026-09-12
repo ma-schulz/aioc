@@ -14,9 +14,11 @@ const AIOC_HOME = process.env.AIOC_HOME || path.join(os.homedir(), '.aioc');
 const INFO_FILE = path.join(AIOC_HOME, 'daemon.json');
 app.setPath('userData', path.join(AIOC_HOME, 'electron'));
 
-// Bewusst KEINE eigene AppUserModelID: ohne eine dazu registrierte Startmenue-Verknuepfung zeichnet
-// Windows das Taskleistensymbol dann auf eine helle, deckende Kachel. Toasts kommen auch ohne sie an
-// (am 12.09.2026 geprueft, mit Ton) - in den Windows-Einstellungen stehen sie nur unter "Electron".
+// Eigene Kennung fuer Taskleiste und Benachrichtigungen. Windows nimmt Symbol und Namen dafuer aus
+// der Startmenue-Verknuepfung mit derselben Kennung (ensureStartMenuShortcut). Ohne beides fasst es
+// alle electron.exe-Fenster unter dem Electron-Atom zusammen, und Toasts stehen unter "Electron".
+const APP_ID = 'de.mp-systeme.aioc';
+app.setAppUserModelId(APP_ID);
 
 const remoteUrl = process.argv.slice(1).find(a => /^https?:\/\//i.test(a)) || null;
 const remote = remoteUrl ? new URL(remoteUrl) : null;
@@ -36,6 +38,32 @@ ipcMain.on('aioc-focus-window', e => {
   win.show();
   win.focus();
 });
+
+// Startmenue-Verknuepfung "Aioc" mit Kennung und Icon anlegen und aktuell halten (etwa wenn das Repo
+// verschoben wurde). Nur fuer das lokale Fenster - ein Fernfenster soll keine Verknuepfung auf einen
+// lokalen Daemon anlegen, der auf dem anderen Rechner womoeglich gar nicht eingerichtet ist.
+function ensureStartMenuShortcut() {
+  if (process.platform !== 'win32' || remote) return;
+  const lnk = path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Aioc.lnk');
+  const want = {
+    target: process.execPath,
+    args: `"${path.join(__dirname, 'main.js')}"`,
+    cwd: path.join(__dirname, '..'),
+    icon: path.join(__dirname, '..', 'ui', 'icon.ico'),
+    iconIndex: 0,
+    appUserModelId: APP_ID,
+    description: 'Aioc – alle KI-Agenten in einem Fenster',
+  };
+  try {
+    let current = null;
+    try { current = shell.readShortcutLink(lnk); } catch { /* noch keine */ }
+    const same = current && current.target === want.target && current.args === want.args
+      && current.icon === want.icon && current.appUserModelId === want.appUserModelId;
+    if (!same) shell.writeShortcutLink(lnk, current ? 'replace' : 'create', want);
+  } catch (err) {
+    console.error('[aioc] Startmenue-Verknuepfung nicht angelegt:', err.message);
+  }
+}
 
 function readInfo() {
   try { return JSON.parse(fs.readFileSync(INFO_FILE, 'utf8')); } catch { return null; }
@@ -65,6 +93,7 @@ async function ensureDaemon() {
 
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null); // keine Accelerators – alle Tasten gehören dem Terminal
+  ensureStartMenuShortcut(); // vor dem ersten Fenster, damit Windows es gleich richtig einsortiert
 
   // Erlaubt fuer die eigene UI: Zwischenablage lesen (Text UND Bilder erkennen) und
   // Benachrichtigungen - ohne 'notifications' bliebe der Toast aus dem Fenster still.
@@ -114,6 +143,7 @@ app.whenReady().then(async () => {
     width: bounds?.width || 1500, height: bounds?.height || 950,
     x: bounds?.x, y: bounds?.y, minWidth: 900, minHeight: 500,
     backgroundColor: '#0C0C0C', autoHideMenuBar: true, title: remote ? `Aioc – ${remote.hostname}` : 'Aioc',
+    icon: path.join(__dirname, '..', 'ui', 'icon.ico'), // Titelleiste und Alt+Tab
     webPreferences: { preload: path.join(__dirname, 'preload.js') },
   });
   if (bounds?.maximized) win.maximize();
