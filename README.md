@@ -205,4 +205,4 @@ State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\`, `daemon.j
 
 [MIT](LICENSE)
 
-The agent icons in `ui/agents/` identify the agents and remain the trademarks of their owners: the Claude mark from [Simple Icons](https://simpleicons.org) (CC0, recoloured to Claude's brand colour), the OpenAI mark from OpenAI's own favicon, the Pi mark from [pi.dev](https://pi.dev), and the PowerShell icon extracted from `pwsh.exe`.
+The agent icons in `ui/agents/` identify the agents and remain the trademarks of their owners: the Claude mark from [Simple Icons](https://simpleicons.org) (CC0, recoloured to Claude's brand colour), the OpenAI mark from OpenAI's own favicon, the Pi mark from [pi.dev](https://pi.dev), and the PowerShell icon extracted from `pwsh.exe`. They are embedded into `ui/style.css` as data URIs, so a UI update shows them even while an older daemon is still running; after changing a file there, run `node ui/agents/embed.js`.

@@ -41,11 +41,6 @@ const STATIC = {
   '/icon-512.png': [path.join(UI_DIR, 'icon-512.png'), 'image/png'],
   // Service Worker: muss unter / liegen, sonst gilt er nicht fuer die ganze Oberflaeche
   '/sw.js': [path.join(UI_DIR, 'sw.js'), 'text/javascript'],
-  // Agenten-Symbole: Claude aus Simple Icons, OpenAI von cdn.oaistatic.com, Pi von pi.dev, pwsh aus pwsh.exe
-  '/agents/claude.svg': [path.join(UI_DIR, 'agents', 'claude.svg'), 'image/svg+xml'],
-  '/agents/codex.svg': [path.join(UI_DIR, 'agents', 'codex.svg'), 'image/svg+xml'],
-  '/agents/pi.svg': [path.join(UI_DIR, 'agents', 'pi.svg'), 'image/svg+xml'],
-  '/agents/pwsh.png': [path.join(UI_DIR, 'agents', 'pwsh.png'), 'image/png'],
 };
 
 const wss = new WebSocketServer({ noServer: true });

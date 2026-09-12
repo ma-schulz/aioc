@@ -869,20 +869,21 @@
     $('recents').innerHTML = recents.map(r => `<option value="${r.replaceAll('"', '&quot;')}">`).join('');
   }
 
-  // Kleines Agenten-Symbol statt des Namens; der Name bleibt als Tooltip und für Screenreader erhalten
-  const AGENT_ICON = { claude: '/agents/claude.svg', codex: '/agents/codex.svg', pi: '/agents/pi.svg', pwsh: '/agents/pwsh.png' };
+  // Kleines Agenten-Symbol statt des Namens; der Name bleibt als Tooltip und für Screenreader erhalten.
+  // Die Bilder stecken als data:-URIs in style.css (ui/agents/embed.js) - so erscheinen sie auch, wenn
+  // der laufende Daemon älter ist als die Oberfläche und eigene Bild-Routen noch nicht kennt.
+  const AGENTS_WITH_ICON = new Set(['claude', 'codex', 'pi', 'pwsh']);
   function setAgentIcon(el, agent) {
     if (el.dataset.agent === agent) return;
     el.dataset.agent = agent;
     el.title = agent;
     el.replaceChildren();
-    const src = AGENT_ICON[agent];
-    if (!src) { el.textContent = agent; return; }
-    const img = document.createElement('img');
-    img.className = 'agi';
-    img.src = src;
-    img.alt = agent;
-    el.appendChild(img);
+    if (!AGENTS_WITH_ICON.has(agent)) { el.textContent = agent; return; }
+    const icon = document.createElement('span');
+    icon.className = 'agi agi-' + agent;
+    icon.setAttribute('role', 'img');
+    icon.setAttribute('aria-label', agent);
+    el.appendChild(icon);
   }
 
   // Letzter Pfadteil - bei Worktrees genau deren Name (z. B. "7139_welle8_portale")
