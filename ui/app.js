@@ -132,6 +132,17 @@
   const isMinus = e => e.key === '-' || e.key === '_' || e.keyCode === 189 || e.code === 'NumpadSubtract';
   const paneKey = e => e.altKey && e.shiftKey && !e.ctrlKey && (isPlus(e) || isMinus(e) || /^[dzw]$/i.test(e.key));
 
+  // Ctrl+1…0 waehlt die ersten zehn Sessions der Liste, mit Shift die Plaetze 11–20. Die Ziffer kommt
+  // aus e.code, denn auf deutscher Tastatur liefert Shift+1 ein "!". AltGr (= Ctrl+Alt) bleibt frei,
+  // sonst kaemen { [ ] } nicht mehr ins Terminal.
+  const sessionShortcut = e => {
+    if (!e.ctrlKey || e.altKey || e.getModifierState?.('AltGraph')) return null;
+    const m = /^(?:Digit|Numpad)(\d)$/.exec(e.code || '');
+    if (!m) return null;
+    const d = Number(m[1]);
+    return (d === 0 ? 10 : d) + (e.shiftKey ? 10 : 0);
+  };
+
   let sortMode = 'ordner', collapsed = new Set();
   try { sortMode = localStorage.getItem('aioc-sort') || 'ordner'; } catch {}
   try { collapsed = new Set(JSON.parse(localStorage.getItem('aioc-collapsed') || '[]')); } catch {}
@@ -298,7 +309,7 @@
       if (ev.key === 'F2') return false; // Umbenennen
       if (paneKey(ev)) return false; // Teilen, Zoom, Pane schließen
       if (ev.altKey && !ev.ctrlKey && !ev.shiftKey && ev.key.startsWith('Arrow')) return false; // Pane-Fokus
-      if (ev.ctrlKey && !ev.shiftKey && ev.key >= '1' && ev.key <= '9') return false;
+      if (sessionShortcut(ev)) return false; // Sessionwechsel gehoert Aioc, nicht dem Terminal
       return true;
     });
     // Claude-Vollbild: Rad -> PageUp/PageDown (= halbe Bildschirmhoehe je Schritt, scroll:pageUp).
@@ -724,7 +735,7 @@
       const b = document.createElement('button');
       b.className = `sess ${s.status}${s.unread ? ' unread' : ''}`;
       b.setAttribute('aria-current', panes.some(p => p.id === s.id) ? 'true' : 'false');
-      if (shortcut <= 9) b.title = `Ctrl+${shortcut}`;
+      if (shortcut <= 20) b.title = shortcut <= 10 ? `Ctrl+${shortcut % 10}` : `Ctrl+Shift+${shortcut % 10}`;
       b.dataset.n = shortcut;
       b.dataset.id = s.id;
       b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="grip" title="Ziehen: Reihenfolge im Ordner ändern">⠿</span><span class="st"></span>`;
@@ -1057,8 +1068,9 @@
       return;
     }
     if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key.startsWith('Arrow')) { e.preventDefault(); moveFocus(e.key); return; }
-    if (e.ctrlKey && !e.shiftKey && e.key >= '1' && e.key <= '9') {
-      const b = document.querySelector(`.sess[data-n="${e.key}"]`);
+    const nth = sessionShortcut(e);
+    if (nth) {
+      const b = document.querySelector(`.sess[data-n="${nth}"]`);
       if (b) { e.preventDefault(); b.click(); }
     }
   }, true);

@@ -62,7 +62,8 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | Key | Action |
 | --- | --- |
 | `Ctrl+Shift+N` | New session |
-| `Ctrl+1 … 9` | Switch to the n-th session in the list — loads it into the focused pane, or moves focus to the pane that already shows it |
+| `Ctrl+1 … 0` | Switch to the 1st … 10th session in the list — loads it into the focused pane, or moves focus to the pane that already shows it |
+| `Ctrl+Shift+1 … 0` | The same for the 11th … 20th session |
 | `F2` / `Ctrl+Shift+R` | Rename the current session (Enter saves, Esc cancels) — the name is set inside the agent as well (Claude Code, Codex) |
 | `Alt+Shift+D` | Split the focused pane along its longer side |
 | `Alt+Shift++` / `Alt+Shift+-` | Split to the right / split downwards |
