@@ -1171,5 +1171,12 @@
   // Fenster schmaler/breiter als die Handy-Grenze: Layout neu (Handy zeigt nur das fokussierte Pane)
   MOBILE.addEventListener('change', () => { layoutDirty = true; renderAll(); fitAll(); });
 
+  // Service Worker: Chrome verlangt ihn auf Android fuer die Installation als App. Er cached nichts
+  // (siehe ui/sw.js) und braucht einen sicheren Kontext - ueber ein selbstsigniertes Zertifikat
+  // registriert er sich nicht, dort bleibt es bei der Verknuepfung.
+  if ('serviceWorker' in navigator && window.isSecureContext) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
   connect();
 })();

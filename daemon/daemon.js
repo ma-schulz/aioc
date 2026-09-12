@@ -37,6 +37,10 @@ const STATIC = {
   '/style.css': [path.join(UI_DIR, 'style.css'), 'text/css'],
   '/manifest.webmanifest': [path.join(UI_DIR, 'manifest.webmanifest'), 'application/manifest+json'],
   '/icon.svg': [path.join(UI_DIR, 'icon.svg'), 'image/svg+xml'],
+  '/icon-192.png': [path.join(UI_DIR, 'icon-192.png'), 'image/png'],
+  '/icon-512.png': [path.join(UI_DIR, 'icon-512.png'), 'image/png'],
+  // Service Worker: muss unter / liegen, sonst gilt er nicht fuer die ganze Oberflaeche
+  '/sw.js': [path.join(UI_DIR, 'sw.js'), 'text/javascript'],
 };
 
 const wss = new WebSocketServer({ noServer: true });
