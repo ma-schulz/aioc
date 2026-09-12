@@ -46,14 +46,63 @@ function saveSessionsNow(list) {
   writeJsonAtomic(sessionsFile, list);
 }
 
+// Scrollback = Checkpoint + Journal. Der Checkpoint (<id>.txt, wie bisher der serialisierte Puffer)
+// wird nur noch selten geschrieben; die laufende Ausgabe haengt als Rohtext im Journal (<id>.log).
+// Vorher serialisierte der Daemon alle 3 s je Session und alle 30 s alle Sessions den ganzen Puffer -
+// gemessene ~80 ms je Session, die synchron den Hauptthread blockierten und das Tippen verzoegerten.
+// Der Checkpoint behaelt seinen Dateinamen, aeltere Profile laufen also ohne Umstellung weiter.
 function scrollbackPath(id) { return path.join(SCROLLBACK_DIR, id + '.txt'); }
+function journalPath(id) { return path.join(SCROLLBACK_DIR, id + '.log'); }
+
+const journals = new Map(); // id -> WriteStream (asynchron, blockiert den Hauptthread nicht)
+
+function appendScrollback(id, chunk) {
+  if (!chunk) return 0;
+  let stream = journals.get(id);
+  if (!stream) {
+    try { stream = fs.createWriteStream(journalPath(id), { flags: 'a' }); } catch { return 0; }
+    stream.on('error', () => journals.delete(id));
+    journals.set(id, stream);
+  }
+  try { stream.write(chunk); } catch {}
+  return Buffer.byteLength(chunk);
+}
+
+function closeJournal(id) {
+  const stream = journals.get(id);
+  if (!stream) return;
+  journals.delete(id);
+  try { stream.end(); } catch {}
+}
+
+function closeAllJournals() { for (const id of [...journals.keys()]) closeJournal(id); }
+
+function journalSize(id) {
+  try { return fs.statSync(journalPath(id)).size; } catch { return 0; }
+}
+
+// Checkpoint schreiben und das Journal leeren - alles darin steckt jetzt im Checkpoint
 function saveScrollback(id, text) {
-  try { fs.writeFileSync(scrollbackPath(id) + '.tmp', text); fs.renameSync(scrollbackPath(id) + '.tmp', scrollbackPath(id)); } catch {}
+  try {
+    fs.writeFileSync(scrollbackPath(id) + '.tmp', text);
+    fs.renameSync(scrollbackPath(id) + '.tmp', scrollbackPath(id));
+    closeJournal(id);
+    fs.writeFileSync(journalPath(id), '');
+  } catch {}
 }
+
+// Wiederherstellen: erst der Checkpoint, dann die seither angefallene Rohausgabe
 function loadScrollback(id) {
-  try { return fs.readFileSync(scrollbackPath(id), 'utf8'); } catch { return ''; }
+  let out = '';
+  try { out = fs.readFileSync(scrollbackPath(id), 'utf8'); } catch {}
+  try { out += fs.readFileSync(journalPath(id), 'utf8'); } catch {}
+  return out;
 }
-function deleteScrollback(id) { try { fs.unlinkSync(scrollbackPath(id)); } catch {} }
+
+function deleteScrollback(id) {
+  closeJournal(id);
+  for (const file of [scrollbackPath(id), journalPath(id)]) { try { fs.unlinkSync(file); } catch {} }
+}
 
 function loadUiState() { return readJson(uiFile, { recents: [] }); }
 function saveUiState(s) { writeJsonAtomic(uiFile, s); }
@@ -70,5 +119,6 @@ module.exports = {
   loadDaemonInfo, saveDaemonInfo,
   loadSessions, saveSessionsDebounced, saveSessionsNow,
   saveScrollback, loadScrollback, deleteScrollback,
+  appendScrollback, journalSize, closeAllJournals,
   loadUiState, saveUiState, rememberRecent,
 };

@@ -24,6 +24,11 @@ const KEYS = {
 // Umbenennen zurueck in den Agenten schreiben: Claude Code und Codex koennen das per Slash-Befehl
 const RENAME_COMMAND = { claude: '/rename', codex: '/rename' };
 const apiError = (status, message) => Object.assign(new Error(message), { status });
+// Ein Checkpoint (Puffer serialisieren) kostet gemessen ~80 ms und blockiert dabei den Hauptthread,
+// also alles andere - auch die Tastatureingaben. Deshalb nur selten: wenn seit dem letzten Checkpoint
+// so viel Rohausgabe im Journal steht, sonst nach dieser Zeit, ausserdem beim Beenden.
+const CHECKPOINT_BYTES = 2 * 1024 * 1024;
+const CHECKPOINT_MS = 5 * 60 * 1000;
 
 // Tastenname -> Sequenz; Pfeile im Application-Cursor-Modus (DECCKM) als ESC O x
 function keySequence(name, appCursor) {
@@ -95,6 +100,8 @@ class Session {
     this.nameWriteTimer = null;
     this.spawnedAt = 0;
     this.pendingTimer = null;
+    this.journalBytes = 0; // Rohausgabe seit dem letzten Checkpoint
+    this.checkpointAt = 0;
   }
 
   ensureTerm() {
@@ -141,6 +148,7 @@ class Session {
     this.term.write(d);
     this.mgr.emitData(this.entry.id, d);
     this.parseTitles(d);
+    this.journalBytes += state.appendScrollback(this.entry.id, d); // anhaengen statt serialisieren
     this.scheduleSave();
     if (this.entry.agent === 'pwsh') this.heuristic();
   }
@@ -440,15 +448,27 @@ class Session {
     return state.loadScrollback(this.entry.id);
   }
 
+  // Ist das Journal gross geworden, sofort einen Checkpoint ziehen; sonst in Ruhe nach CHECKPOINT_MS
   scheduleSave() {
+    if (this.journalBytes >= CHECKPOINT_BYTES) {
+      clearTimeout(this.saveTimer);
+      this.saveTimer = null;
+      this.saveNow();
+      return;
+    }
     if (this.saveTimer) return;
-    this.saveTimer = setTimeout(() => { this.saveTimer = null; this.saveNow(); }, 3000);
+    this.saveTimer = setTimeout(() => { this.saveTimer = null; this.saveNow(); }, CHECKPOINT_MS);
   }
 
+  // Checkpoint: Puffer serialisieren, Journal leeren
   saveNow() {
     clearTimeout(this.saveTimer);
     this.saveTimer = null;
-    if (this.term) state.saveScrollback(this.entry.id, this.snapshot());
+    if (!this.term) return;
+    if (!this.journalBytes && this.checkpointAt) return; // seither nichts passiert
+    state.saveScrollback(this.entry.id, this.snapshot());
+    this.journalBytes = 0;
+    this.checkpointAt = Date.now();
   }
 
   kill() { if (this.proc) { try { this.proc.kill(); } catch {} } }
@@ -603,8 +623,14 @@ class SessionManager {
       .sort((a, b) => a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
   }
 
+  // Laufender Takt: nur die Sessionliste sichern. Die Checkpoints laufen je Session nach eigenem
+  // Takt - alle auf einmal zu serialisieren hat den Daemon fuer eine halbe Sekunde angehalten.
+  flushNow() { state.saveSessionsNow(this.toPersist()); }
+
+  // Beim Beenden: von jeder Session einen Checkpoint ziehen und die Journale sauber schliessen
   saveAllNow() {
     for (const s of this.sessions.values()) { try { s.saveNow(); } catch {} }
+    state.closeAllJournals();
     state.saveSessionsNow(this.toPersist());
   }
 }

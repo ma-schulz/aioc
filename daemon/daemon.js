@@ -321,7 +321,7 @@ function shutdown() {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('SIGHUP', shutdown);
-setInterval(() => { try { mgr.saveAllNow(); } catch {} }, 30000).unref();
+setInterval(() => { try { mgr.flushNow(); } catch {} }, 30000).unref();
 
 // Git-Stand: Ordner mit laufenden Sessions alle 15 s, die uebrigen alle 2 min - dazu sofort nach
 // jedem Statuswechsel (onStatus)
