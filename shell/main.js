@@ -14,6 +14,11 @@ const AIOC_HOME = process.env.AIOC_HOME || path.join(os.homedir(), '.aioc');
 const INFO_FILE = path.join(AIOC_HOME, 'daemon.json');
 app.setPath('userData', path.join(AIOC_HOME, 'electron'));
 
+// Windows ordnet Toasts einer AppUserModelID zu. Mit einer festen eigenen taucht Aioc in den
+// Windows-Benachrichtigungseinstellungen als eigener Eintrag auf (Ton, Banner, Nicht stoeren);
+// ohne sie liefen die Meldungen unter der Kennung von Electron.
+app.setAppUserModelId('de.mp-systeme.aioc');
+
 const remoteUrl = process.argv.slice(1).find(a => /^https?:\/\//i.test(a)) || null;
 const remote = remoteUrl ? new URL(remoteUrl) : null;
 
@@ -22,6 +27,15 @@ const remote = remoteUrl ? new URL(remoteUrl) : null;
 // durch, shell.openExternal wuerde sonst auch beliebige Protokoll-Handler starten.
 ipcMain.on('aioc-open-external', (_e, url) => {
   if (typeof url === 'string' && /^(https?|mailto):/i.test(url)) shell.openExternal(url);
+});
+
+// Klick auf einen Toast soll das Fenster nach vorn holen - im Renderer allein reicht window.focus() dafuer nicht
+ipcMain.on('aioc-focus-window', e => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
 });
 
 function readInfo() {
@@ -53,13 +67,14 @@ async function ensureDaemon() {
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(null); // keine Accelerators – alle Tasten gehören dem Terminal
 
-  // Zwischenablage lesen (Text UND Bilder erkennen) ist für die eigene UI erlaubt
-  const clipboardPerms = new Set(['clipboard-read', 'clipboard-sanitized-write']);
+  // Erlaubt fuer die eigene UI: Zwischenablage lesen (Text UND Bilder erkennen) und
+  // Benachrichtigungen - ohne 'notifications' bliebe der Toast aus dem Fenster still.
+  const ownPerms = new Set(['clipboard-read', 'clipboard-sanitized-write', 'notifications']);
   const isOwnUi = url => /^http:\/\/127\.0\.0\.1(:\d+)?\//.test(url || '') || (remote && (url || '').startsWith(remote.origin));
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb, details) =>
-    cb(clipboardPerms.has(permission) && isOwnUi(details?.requestingUrl || wc.getURL())));
+    cb(ownPerms.has(permission) && isOwnUi(details?.requestingUrl || wc.getURL())));
   session.defaultSession.setPermissionCheckHandler((wc, permission, origin) =>
-    clipboardPerms.has(permission) && isOwnUi(origin ? origin + '/' : wc?.getURL()));
+    ownPerms.has(permission) && isOwnUi(origin ? origin + '/' : wc?.getURL()));
 
   let url;
   let pinFailure = null;

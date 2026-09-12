@@ -82,6 +82,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - Drag the divider to resize the sidebar; double-click resets it. The same works for the dividers between panes — double-click puts them back to half and half.
 - Each pane header carries its own buttons: **◧** split right, **⬒** split down, **⤢** zoom, **✕** close the pane.
 - Double-click a session name (in the sidebar or in the header) to rename it.
+- **Notifications.** When a session starts waiting for you or finishes, Aioc shows a notification — but only when the window is in the background or that session is not open in a pane, so it never fires for what you are already looking at. Clicking it brings the window forward and loads that session into the focused pane. Switch it off per device under ⚙. In the local window this is a Windows toast (Aioc registers its own AppUserModelID, so it appears under *Settings → Notifications* like any other app); remote windows use the browser's own notifications and ask for permission once.
 - **⚙ Background image and per-device settings:** pick an image (stored by the daemon, so remote windows show it too), and set opacity and terminal font size for *this* device — like `backgroundImage` in Windows Terminal.
 - **Close** ends the process (asks first). **Remove** deletes an exited session and its scrollback from the list.
 

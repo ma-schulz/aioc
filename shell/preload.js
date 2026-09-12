@@ -4,4 +4,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('aioc', {
   openExternal: url => { if (typeof url === 'string') ipcRenderer.send('aioc-open-external', url); },
+  // Klick auf einen Toast: window.focus() allein holt das Fenster unter Windows nicht nach vorn
+  focusWindow: () => ipcRenderer.send('aioc-focus-window'),
 });

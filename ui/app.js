@@ -167,6 +167,7 @@
     ws.onmessage = e => {
       const m = JSON.parse(e.data);
       if (m.t === 'hello' || m.t === 'sessions') {
+        notifyChanges(m.sessions, m.t === 'hello'); // vor dem Überschreiben: alter Status je Session
         sessions = m.sessions; feed = m.feed || []; recents = m.recents || recents; lan = m.lan || lan;
         if (m.background && (m.background.url !== background.url || m.background.opacity !== background.opacity)) {
           background = m.background;
@@ -236,6 +237,64 @@
     try { localStorage.setItem('aioc-fontsize', String(fontSize)); } catch {}
     applyFontSize();
   });
+  // ---------- Benachrichtigungen ----------
+  // Gemeldet werden die Wechsel nach "Rückfrage" und nach "fertig" - aber nur, wenn das Fenster nicht
+  // im Vordergrund ist oder die Session in keinem Pane liegt. Im Electron-Fenster macht Windows daraus
+  // einen Toast (AppUserModelID setzt shell/main.js), im Browser und auf dem Handy meldet der Browser.
+  let notifyOn = true;
+  try { notifyOn = localStorage.getItem('aioc-toasts') !== '0'; } catch {}
+  const lastStatus = new Map();
+  const NOTIFY = {
+    waiting: s => [`${s.name} · wartet auf dich`, s.detail || 'Rückfrage'],
+    done: s => [`${s.name} · fertig`, s.detail || 'fertig'],
+  };
+
+  function updateNotifyHint() {
+    const blocked = typeof Notification === 'undefined' || Notification.permission === 'denied';
+    $('toastshint').textContent = blocked
+      ? 'Dieses Fenster darf keine Benachrichtigungen zeigen – bitte im Browser bzw. in den Windows-Einstellungen erlauben.'
+      : 'Meldet Rückfragen und fertige Sessions – nur wenn Aioc im Hintergrund liegt oder die Session in keinem Pane offen ist.';
+  }
+
+  async function askNotifyPermission() {
+    try {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'default') await Notification.requestPermission();
+    } catch {}
+    updateNotifyHint();
+  }
+
+  function notifyChanges(next, first) {
+    for (const s of next) {
+      const before = lastStatus.get(s.id);
+      lastStatus.set(s.id, s.status);
+      // Beim ersten Stand nichts melden, sonst käme beim Öffnen für jede fertige Session ein Toast
+      if (first || before === undefined || before === s.status) continue;
+      if (!notifyOn || !NOTIFY[s.status]) continue;
+      if (typeof Notification === 'undefined' || Notification.permission !== 'granted') continue;
+      if (document.hasFocus() && panes.some(p => p.id === s.id)) continue; // liegt sichtbar vor dir
+      const [title, body] = NOTIFY[s.status](s);
+      try {
+        const n = new Notification(title, { body, tag: 'aioc-' + s.id }); // tag: neuer Toast ersetzt den alten je Session
+        n.onclick = () => {
+          window.aioc?.focusWindow?.();
+          window.focus();
+          assignToPane(focused, s.id);
+          n.close();
+        };
+      } catch { /* Browser ohne Benachrichtigungen */ }
+    }
+    for (const id of [...lastStatus.keys()]) if (!next.some(s => s.id === id)) lastStatus.delete(id);
+  }
+
+  $('toasts').checked = notifyOn;
+  $('toasts').addEventListener('change', () => {
+    notifyOn = $('toasts').checked;
+    try { localStorage.setItem('aioc-toasts', notifyOn ? '1' : '0'); } catch {}
+    if (notifyOn) askNotifyPermission(); // der Klick ist die Geste, die der Browser dafür verlangt
+  });
+  if (notifyOn) askNotifyPermission();
+  updateNotifyHint();
+
   $('settingsbtn').addEventListener('click', () => { const p = $('settings'); p.hidden = !p.hidden; });
   document.addEventListener('mousedown', e => {
     const p = $('settings');
