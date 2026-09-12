@@ -14,10 +14,9 @@ const AIOC_HOME = process.env.AIOC_HOME || path.join(os.homedir(), '.aioc');
 const INFO_FILE = path.join(AIOC_HOME, 'daemon.json');
 app.setPath('userData', path.join(AIOC_HOME, 'electron'));
 
-// Windows ordnet Toasts einer AppUserModelID zu. Mit einer festen eigenen taucht Aioc in den
-// Windows-Benachrichtigungseinstellungen als eigener Eintrag auf (Ton, Banner, Nicht stoeren);
-// ohne sie liefen die Meldungen unter der Kennung von Electron.
-app.setAppUserModelId('de.mp-systeme.aioc');
+// Bewusst KEINE eigene AppUserModelID: ohne eine dazu registrierte Startmenue-Verknuepfung zeichnet
+// Windows das Taskleistensymbol dann auf eine helle, deckende Kachel. Toasts kommen auch ohne sie an
+// (am 12.09.2026 geprueft, mit Ton) - in den Windows-Einstellungen stehen sie nur unter "Electron".
 
 const remoteUrl = process.argv.slice(1).find(a => /^https?:\/\//i.test(a)) || null;
 const remote = remoteUrl ? new URL(remoteUrl) : null;
