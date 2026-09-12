@@ -1,7 +1,11 @@
-// Aioc Service Worker. Chrome verlangt fuer die Installation als App (Android) einen Service Worker
-// mit fetch-Behandlung - ohne ihn gibt es nur eine Verknuepfung, keine installierte PWA.
-// Gecacht wird bewusst nichts: die Oberflaeche lebt von der WebSocket-Verbindung zum Daemon, und ein
-// Cache wuerde nach einem Update nur alte Staende ausliefern.
-self.addEventListener('install', () => self.skipWaiting());
-self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
-self.addEventListener('fetch', e => e.respondWith(fetch(e.request)));
+// Aioc Service Worker. Chrome verlangt fuer die Installation als App (Android) lediglich, dass ein
+// fetch-Handler vorhanden ist - er darf nichts tun. Deshalb ist dieser hier bewusst ein Leerlauf:
+// kein respondWith, kein Cache. Der Browser laedt alles genau wie ohne ihn.
+//
+// Ebenso bewusst OHNE skipWaiting/clients.claim: ein Service Worker, der die Seite mitten im ersten
+// Laden uebernimmt, kann bereits laufende Anfragen (z. B. /vendor/xterm.css) ins Leere laufen lassen.
+// Dann fehlen Schrift, Farben und Layout - einmalig und nur beim allerersten Fensterstart.
+// So wird er erst beim naechsten Laden zustaendig, wo nichts mehr in der Luft haengt.
+self.addEventListener('install', () => {});
+self.addEventListener('activate', () => {});
+self.addEventListener('fetch', () => {});
