@@ -822,26 +822,28 @@
       if (shortcut <= 20) b.title = shortcut <= 10 ? `Ctrl+${shortcut % 10}` : `Ctrl+Shift+${shortcut % 10}`;
       b.dataset.n = shortcut;
       b.dataset.id = s.id;
-      b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="grip" title="Ziehen: Reihenfolge im Ordner ändern">⠿</span><span class="st"></span>`;
+      b.innerHTML = `<span class="ic"></span><span class="nm"></span><span class="ag"></span><span class="grip" title="Ziehen: Reihenfolge im Ordner ändern">⠿</span><span class="loc"></span><span class="st"></span>`;
       b.querySelector('.ic').textContent = ICON[s.status] || '·';
       b.querySelector('.nm').textContent = s.name;
       b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
       b.querySelector('.ag').textContent = s.agent;
       const st = b.querySelector('.st');
       st.title = `${wtree.dir}\n${s.detail || ''}`;
-      // Worktree und dessen Stand je Zeile nur in den flachen Listen (Status, Typ). In der
+      st.textContent = s.detail || '';
+      // Eigene Zeile für Worktree und dessen Stand - nur in den flachen Listen (Status, Typ). In der
       // Ordneransicht steht beides in der Überschrift, und die Gruppe folgt dem echten Arbeitsort.
-      if (!byGroup) {
+      const loc = b.querySelector('.loc');
+      if (byGroup) loc.hidden = true;
+      else {
         const wt = document.createElement('span');
         wt.className = 'wt';
         wt.textContent = folderName(wtree.dir);
-        st.append(wt, ' ');
+        loc.append(wt);
         const br = document.createElement('span');
         br.className = 'br';
-        if (fillGit(br, wtree.git)) st.append(br, ' ');
-        st.append('· ');
+        if (fillGit(br, wtree.git)) loc.append(' ', br);
+        loc.title = wtree.dir;
       }
-      st.append(s.detail || '');
       b.addEventListener('click', () => { if (Date.now() >= suppressClick) assignToPane(focused, s.id); });
       b.addEventListener('dblclick', () => { assignToPane(focused, s.id); renamePrompt(s.id); });
       if (byGroup) {

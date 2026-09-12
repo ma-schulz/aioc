@@ -39,16 +39,18 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 #restoreall-wrap { padding: 8px 10px 0; }
 .restoreall { width: 100%; background: transparent; border: 1px dashed #3D4657; color: var(--yellow); border-radius: 5px; padding: 5px; cursor: pointer; }
 .list { overflow-y: auto; flex: 1; padding-bottom: 8px; }
-.grp { display: flex; align-items: baseline; gap: 6px; width: 100%; text-align: left; background: none; border: none; cursor: pointer; padding: 10px 10px 3px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); white-space: nowrap; overflow: hidden; }
+.grp { display: grid; grid-template-columns: 11px 1fr auto; column-gap: 6px; row-gap: 2px; align-items: baseline; width: 100%; text-align: left; background: none; border: none; cursor: pointer; padding: 10px 10px 3px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); }
 .grp:hover { color: var(--fg); }
-.grp .arr { display: inline-block; width: 11px; flex: none; margin-right: -6px; }
-.grp .path { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.grp .br { flex: none; }
-.grp .badge { flex: none; color: var(--yellow); text-transform: none; letter-spacing: 0; }
+.grp .arr { grid-column: 1; grid-row: 1; }
+/* Zwei Zeilen: oben der Ordner (bricht um statt abgeschnitten zu werden), darunter Branch und Stand */
+.grp .path { grid-column: 2; grid-row: 1; overflow-wrap: anywhere; min-width: 0; }
+.grp .br { grid-column: 2 / 4; grid-row: 2; white-space: normal; overflow-wrap: anywhere; }
+.grp .badge { grid-column: 3; grid-row: 1; color: var(--yellow); text-transform: none; letter-spacing: 0; }
 /* Branch + Arbeitsstand (nur Anzeige) */
 .br { font-family: var(--mono); font-size: 11px; white-space: nowrap; text-transform: none; letter-spacing: 0; }
-/* Worktree-Name in der Statussortierung (dort fehlt der Ordnerkopf) */
-.sess .st .wt { font-family: var(--mono); font-size: 11px; color: var(--fg); }
+/* Eigene Zeile in der Status-/Typsortierung: Worktree, Branch und Stand - bricht um, nichts wird abgeschnitten */
+.sess .loc { grid-column: 2 / 5; font-family: var(--mono); font-size: 11px; color: var(--fg); overflow-wrap: anywhere; min-width: 0; }
+.sess .loc .br { white-space: normal; }
 .br .bn { color: #3A96DD; }
 .br .bm { color: var(--fg); }
 .br .bm.conflict { color: var(--red); }
@@ -56,13 +58,14 @@ kbd { background: #2A3140; border: 1px solid #3D4657; border-radius: 4px; paddin
 .sess:hover { background: #1E232B; }
 .sess[aria-current="true"] { background: #232A36; border-color: #33405A; }
 .sess .ic { font-family: var(--mono); font-size: 13px; text-align: center; }
-.sess .nm { color: var(--white); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sess .nm { color: var(--white); overflow-wrap: anywhere; min-width: 0; }
 .sess .ag { font-family: var(--mono); font-size: 10.5px; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
 .sess .grip { font-family: var(--mono); font-size: 12px; color: var(--dim); opacity: 0; cursor: grab; touch-action: none; }
 .sess:hover .grip, .sess.dragging .grip { opacity: .55; }
 .sess.dragging { background: #232A36; border-color: #3D4657; cursor: grabbing; }
 @media (pointer: coarse) { .sess .grip { opacity: .45; } }
-.sess .st { grid-column: 2 / 5; font-size: 11.5px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Detail auf bis zu zwei Zeilen - den vollen Text zeigt der Tooltip */
+.sess .st { grid-column: 2 / 5; font-size: 11.5px; color: var(--dim); overflow-wrap: anywhere; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .sess.running .ic, .sess.starting .ic { color: var(--cyan); }
 .sess.waiting .ic { color: var(--yellow); animation: pulse 1.2s ease-in-out infinite; }
 .sess.waiting .st { color: var(--yellow); }
