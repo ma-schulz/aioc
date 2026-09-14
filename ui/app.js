@@ -546,6 +546,7 @@
   function dropTerm(id) {
     const t = terms.get(id);
     if (!t) return;
+    clearTimeout(t.resizeTimer);
     try { t.term.dispose(); } catch {}
     t.wrap.remove();
     terms.delete(id);
@@ -560,6 +561,18 @@
   // Zuletzt gemessene Pane-Größe: neue Sessions werden damit gestartet, damit die erste
   // Ausgabe schon in der richtigen Breite ankommt (statt 120x32-Standard + späterem Umbruch).
   const lastSize = { cols: 120, rows: 32 };
+  // Codex gibt bei jeder echten Größenänderung seinen ganzen Verlauf neu aus. Beim Ziehen von Sidebar,
+  // Trennlinien oder Fenster geht die neue Größe deshalb erst an den Daemon, wenn sie zur Ruhe kommt -
+  // das Terminal hier passt sich trotzdem sofort an. Die erste Größe nach dem Anhängen geht direkt raus.
+  const RESIZE_SETTLE_MS = 300;
+  function sendSize(id, t) {
+    clearTimeout(t.resizeTimer);
+    t.resizeTimer = null;
+    const { cols, rows } = t.term;
+    if (!t.attached || (t.sentCols === cols && t.sentRows === rows)) return;
+    t.sentCols = cols; t.sentRows = rows;
+    send({ t: 'resize', id, cols, rows });
+  }
   function fitPane(i) {
     const id = panes[i]?.id;
     if (!id) return;
@@ -570,8 +583,9 @@
       const { cols, rows } = t.term;
       if (cols > 10 && rows > 3) { lastSize.cols = cols; lastSize.rows = rows; }
       if (t.sentCols !== cols || t.sentRows !== rows) {
-        t.sentCols = cols; t.sentRows = rows;
-        send({ t: 'resize', id, cols, rows });
+        clearTimeout(t.resizeTimer);
+        if (t.sentCols === undefined) sendSize(id, t);
+        else t.resizeTimer = setTimeout(() => sendSize(id, t), RESIZE_SETTLE_MS);
       }
     } catch {}
   }
@@ -1157,7 +1171,7 @@
       const shown = panes.some(p => p.id === id);
       t.wrap.classList.toggle('active', shown);
       // Nicht mehr angezeigte Sessions loslassen: ihre Groessenvorgabe faellt beim Daemon sofort weg
-      if (!shown && t.attached) { t.attached = false; t.sentCols = t.sentRows = undefined; send({ t: 'detach', id }); }
+      if (!shown && t.attached) { t.attached = false; clearTimeout(t.resizeTimer); t.sentCols = t.sentRows = undefined; send({ t: 'detach', id }); }
     }
   }
 

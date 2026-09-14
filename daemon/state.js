@@ -104,6 +104,20 @@ function deleteScrollback(id) {
   for (const file of [scrollbackPath(id), journalPath(id)]) { try { fs.unlinkSync(file); } catch {} }
 }
 
+// Scrollback-Dateien, zu denen keine Session mehr gehoert, blieben sonst fuer immer liegen (Sessions,
+// die nicht ueber dispose verschwunden sind). Nur beim Start aufrufen, bevor Journale geoeffnet werden.
+function pruneScrollback(keepIds) {
+  let files = 0, bytes = 0, names = [];
+  try { names = fs.readdirSync(SCROLLBACK_DIR); } catch { return { files, bytes }; }
+  for (const name of names) {
+    const m = name.match(/^([0-9a-z]+)\.(?:txt|log)(?:\.tmp)?$/i);
+    if (!m || keepIds.has(m[1])) continue;
+    const file = path.join(SCROLLBACK_DIR, name);
+    try { const size = fs.statSync(file).size; fs.unlinkSync(file); files++; bytes += size; } catch {}
+  }
+  return { files, bytes };
+}
+
 function loadUiState() { return readJson(uiFile, { recents: [] }); }
 function saveUiState(s) { writeJsonAtomic(uiFile, s); }
 function rememberRecent(cwd) {
@@ -118,7 +132,7 @@ module.exports = {
   readJson, writeJsonAtomic,
   loadDaemonInfo, saveDaemonInfo,
   loadSessions, saveSessionsDebounced, saveSessionsNow,
-  saveScrollback, loadScrollback, deleteScrollback,
+  saveScrollback, loadScrollback, deleteScrollback, pruneScrollback,
   appendScrollback, journalSize, closeAllJournals,
   loadUiState, saveUiState, rememberRecent,
 };

@@ -100,6 +100,10 @@ const mgr = new SessionManager(PORT, {
   onGone: id => { for (const ws of wss.clients) send(ws, { t: 'gone', id }); api.checkWaiters(); },
 });
 mgr.adoptSaved();
+{
+  const pruned = state.pruneScrollback(new Set(mgr.sessions.keys()));
+  if (pruned.files) mgr.pushFeed(`Aufgeräumt: ${pruned.files} Scrollback-Dateien ohne Session (${(pruned.bytes / 1048576).toFixed(1)} MB)`);
+}
 const api = createApi({ mgr, info, git, isLoopback });
 
 function send(ws, obj) { if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} } }

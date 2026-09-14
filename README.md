@@ -204,7 +204,7 @@ ui/agents/     agent icons; embed.js embeds them into style.css
 shell/         the Electron shell (starts the daemon if needed, loads the UI)
 ```
 
-State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\` (per session a checkpoint `<id>.txt` plus a journal `<id>.log` that new output is appended to), `daemon.json`, `window.json`, `ui-state.json` (recent folders), the background image, `tls\` (certificates) and the generated `claude-settings.json`. Set `AIOC_HOME` (and `AIOC_DAEMON_PORT`) to run a second, fully isolated profile — handy for testing.
+State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\` (per session a checkpoint `<id>.txt` plus a journal `<id>.log` that new output is appended to; files whose session no longer exists are removed when the daemon starts), `daemon.json`, `window.json`, `ui-state.json` (recent folders), the background image, `tls\` (certificates) and the generated `claude-settings.json`. Set `AIOC_HOME` (and `AIOC_DAEMON_PORT`) to run a second, fully isolated profile — handy for testing.
 
 ## License
 
