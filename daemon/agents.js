@@ -67,6 +67,13 @@ function splitArgs(str) {
   return out;
 }
 
+// Standard fuer alle Sessions (User-Vorgabe 04.10.2026): Claude mit Remote Control, Codex im
+// Yolo-Modus. Bringen die Session-Args selbst etwas dazu mit, gewinnen diese - Codex bricht bei
+// doppeltem --yolo oder --yolo + --full-auto mit Exit 2 ab.
+const hasArg = (extra, re) => extra.some(a => re.test(a));
+const CLAUDE_RC = /^--remote-control(=|$)/;
+const CODEX_POLICY = /^(--yolo|--dangerously-bypass-approvals-and-sandbox|--full-auto|--approve-for-me|-a|--ask-for-approval|-s|--sandbox)(=|$)/;
+
 // Build the spawn spec for a session. entry: {agent, cwd, args, agentSessionId}; resume: reuse
 // the agent's own conversation persistence after daemon/PC restart.
 function buildSpawn(entry, port, { resume = false } = {}) {
@@ -75,13 +82,17 @@ function buildSpawn(entry, port, { resume = false } = {}) {
   switch (entry.agent) {
     case 'claude': {
       const settings = writeClaudeSettings();
-      const args = ['/c', 'claude', '--settings', settings];
+      const args = ['/c', 'claude'];
+      // vor --settings: der optionale Name von --remote-control darf keinen Prompt schlucken
+      if (!hasArg(extra, CLAUDE_RC)) args.push('--remote-control');
+      args.push('--settings', settings);
       if (resume && entry.agentSessionId) args.push('--resume', entry.agentSessionId);
       return { file: 'cmd.exe', args: [...args, ...extra], env };
     }
     case 'codex': {
       const args = ['/c', 'codex'];
       if (resume && entry.agentSessionId) args.push('resume', entry.agentSessionId);
+      if (!hasArg(extra, CODEX_POLICY)) args.push('--dangerously-bypass-approvals-and-sandbox');
       // Codex' Hook-Trust-Dialog ist one-shot: einmal weggeklickt, laufen Hooks still nie.
       // Die Aioc-Hooks sind unsere eigenen -c-Injektionen, daher Trust hier bewusst umgehen.
       args.push('--dangerously-bypass-hook-trust');

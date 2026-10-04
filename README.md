@@ -122,6 +122,8 @@ Titles that are not names stay out: `Claude Code`, Codex' bare folder title, the
 
 **Note on Codex:** Codex asks once whether it may run newly configured hooks — and that dialog is one-shot. If it is dismissed, the hooks are silently never executed. Because the only hooks involved are Aioc's own command-line injections, Aioc starts Codex with `--dangerously-bypass-hook-trust`. If you keep your own hooks in `~/.codex/hooks.json`, be aware that this flag covers them too.
 
+**Launch defaults:** every Claude Code session starts with `--remote-control`, so it can be picked up on the phone or at claude.ai/code right away; every Codex session starts in YOLO mode (`--dangerously-bypass-approvals-and-sandbox`, no approvals, no sandbox). Both also apply when a session is restored after a restart. Arguments you give a session yourself win: `--remote-control <name>` replaces the plain flag, and any of `--yolo`, `--full-auto`, `--approve-for-me`, `-a`/`--ask-for-approval` or `-s`/`--sandbox` turns the YOLO default off for that session — Codex refuses to start with `--yolo` twice or together with `--full-auto`.
+
 ## Scripting (`aioc-ctl`)
 
 Sessions can be driven from the command line — by your own scripts, and by the agents themselves. `bin\` is prepended to the `PATH` of Aioc sessions only, so inside any Aioc session `aioc-ctl` is simply there; nothing is installed globally and no agent configuration is touched.
