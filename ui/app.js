@@ -30,10 +30,13 @@
   // Bild in der Zwischenablage: der Agent liest sie selbst, sobald er "seine" Taste bekommt
   // (verifiziert 31.08.2026: Claude Code = Alt+V, Codex = rohes Ctrl+V).
   const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', pi: '\x16' };
-  // Shift+Enter = neue Zeile im Prompt (wie im Windows Terminal). xterm.js schickt dafür nur ein
-  // normales Enter, deshalb die Sequenz, die der Agent versteht (verifiziert 31.08.2026):
-  // Claude Code = ESC CR (wie VS-Code-/terminal-setup), Codex + Pi = CSI-u Shift+Enter.
-  const NEWLINE_KEY = { claude: '\x1b\r', codex: '\x1b[13;2u', pi: '\x1b[13;2u' };
+  // xterm.js reduziert Strg/Shift+Enter beide auf ein normales Enter. Damit der Agent den Modifier
+  // erhaelt, senden wir die Sequenz selbst: Claude braucht fuer Shift+Enter weiter ESC CR
+  // (wie VS-Code-/terminal-setup), Codex + Pi verstehen CSI-u. Strg+Enter verstehen alle als CSI-u.
+  const MODIFIED_ENTER_KEY = {
+    shift: { claude: '\x1b\r', codex: '\x1b[13;2u', pi: '\x1b[13;2u' },
+    ctrl: { claude: '\x1b[13;5u', codex: '\x1b[13;5u', pi: '\x1b[13;5u' },
+  };
   // Läuft das Fenster auf dem Daemon-Rechner, reicht die Bild-Taste (gleiche Zwischenablage).
   // Aus der Ferne wird das Bild zum Daemon übertragen, der es dort in die Zwischenablage legt.
   const LOCAL_UI = ['127.0.0.1', 'localhost', '[::1]'].includes(location.hostname);
@@ -419,9 +422,10 @@
     installTouchInput(wrap, term);
     term.attachCustomKeyEventHandler(ev => {
       if (ev.type !== 'keydown') return true;
-      if (ev.key === 'Enter' && ev.shiftKey && !ev.ctrlKey && !ev.altKey) {
-        const nl = NEWLINE_KEY[sessionOf(id)?.agent];
-        if (nl) { send({ t: 'input', id, d: nl }); return false; }
+      if (ev.key === 'Enter' && !ev.altKey && ev.shiftKey !== ev.ctrlKey) {
+        const modifier = ev.shiftKey ? 'shift' : 'ctrl';
+        const key = MODIFIED_ENTER_KEY[modifier][sessionOf(id)?.agent];
+        if (key) { send({ t: 'input', id, d: key }); return false; }
         return true;
       }
       if (ev.ctrlKey && !ev.shiftKey && ev.key === 'c' && term.hasSelection()) {

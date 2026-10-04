@@ -71,6 +71,7 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | `Alt+Shift+W` | Close the pane — the session keeps running and stays in the list |
 | `Alt+← → ↑ ↓` | Move focus to the neighbouring pane (like Windows Terminal) |
 | `Shift+Enter` | New line in the agent's prompt without submitting (Claude Code, Codex, Pi) |
+| `Ctrl+Enter` | Forward Ctrl+Enter distinctly to the agent; the action follows its keybinding (Claude Code, Codex, Pi) |
 | `Ctrl+Shift+F` | Search in the current terminal |
 | `Ctrl+C` / `Ctrl+V` | Copy when text is selected (otherwise sends the interrupt) / paste — text is pasted, an **image** in the clipboard is handed to the agent (Claude Code, Codex) |
 | Right click | Copy the selection, or paste if nothing is selected |
