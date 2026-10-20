@@ -429,9 +429,9 @@
     // Textauswahl immer durch xterm.js selbst statt durch die TUI des Agenten: die Agenten
     // (Claude, Codex, Pi) kopieren jede Mausauswahl sofort beim Loslassen und ueberschreiben
     // damit ungefragt die Zwischenablage. xterm.js markiert nur; kopiert wird erst bei Strg+C
-    // oder Rechtsklick. Nur das Mausrad (button === 4) geht weiter als SGR-Sequenz an den Agenten;
-    // sonstige Maus-Events (insb. mousemove unter ?1003h) wuerden ueber triggerDataEvent(..., true)
-    // onUserInput feuern und die Auswahl sofort wieder loeschen.
+    // oder Rechtsklick. Ans PTY gehen nur das Mausrad (button === 4) und echte Einzelklicks ohne
+    // Textauswahl (damit Aufklappen/Artefakte in Claude, Pi und Codex weiter per Klick aufgehen);
+    // mousemove/mousedrag unter ?1003h bleiben aus, weil sie sonst via onUserInput die Auswahl loeschen.
     if (term._core?._selectionService) {
       term._core._selectionService.shouldForceSelection = () => true;
       term._core._selectionService.disable = () => {};
@@ -441,6 +441,18 @@
       const cms = term._core.coreMouseService;
       const origTrigger = cms.triggerMouseEvent.bind(cms);
       cms.triggerMouseEvent = ev => (ev.button === 4 ? origTrigger(ev) : false);
+      let clickCandidate = false;
+      wrap.addEventListener('mousedown', ev => {
+        clickCandidate = ev.button === 0 && ev.detail === 1 && !term.hasSelection();
+      }, true);
+      wrap.addEventListener('mouseup', ev => {
+        if (!clickCandidate || ev.button !== 0 || term.hasSelection() || term._core?._linkifier2?.currentLink) return;
+        clickCandidate = false;
+        const pos = term._core._mouseService?.getMouseReportCoords(ev, term._core.screenElement);
+        if (!pos) return;
+        origTrigger({ col: pos.col, row: pos.row, x: pos.x, y: pos.y, button: 0, action: 1, ctrl: ev.ctrlKey, alt: ev.altKey, shift: ev.shiftKey });
+        origTrigger({ col: pos.col, row: pos.row, x: pos.x, y: pos.y, button: 0, action: 0, ctrl: ev.ctrlKey, alt: ev.altKey, shift: ev.shiftKey });
+      });
     }
     try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
     term.onData(d => send({ t: 'input', id, d }));
