@@ -426,6 +426,15 @@
     term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => openExternal(uri)));
     try { term.loadAddon(new Unicode11Addon.Unicode11Addon()); term.unicode.activeVersion = '11'; } catch {}
     term.open(wrap);
+    // Textauswahl immer durch xterm.js selbst statt durch die TUI des Agenten: die Agenten
+    // (Claude, Codex, Pi) kopieren jede Mausauswahl sofort beim Loslassen und ueberschreiben
+    // damit ungefragt die Zwischenablage. xterm.js markiert nur; kopiert wird erst bei Strg+C
+    // oder Rechtsklick. Das Mausrad (wheel) geht weiterhin als SGR-Sequenz an den Agenten.
+    if (term._core?._selectionService) {
+      term._core._selectionService.shouldForceSelection = () => true;
+      term._core._selectionService.disable = () => {};
+      term._core._selectionService.enable();
+    }
     try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
     term.onData(d => send({ t: 'input', id, d }));
     installTouchInput(wrap, term);
@@ -437,7 +446,7 @@
         if (key) { send({ t: 'input', id, d: key }); return false; }
         return true;
       }
-      if (ev.ctrlKey && !ev.shiftKey && ev.key === 'c' && term.hasSelection()) {
+      if (ev.ctrlKey && !ev.shiftKey && ev.key.toLowerCase() === 'c' && term.hasSelection()) {
         navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
         term.clearSelection();
         return false;
