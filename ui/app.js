@@ -429,11 +429,18 @@
     // Textauswahl immer durch xterm.js selbst statt durch die TUI des Agenten: die Agenten
     // (Claude, Codex, Pi) kopieren jede Mausauswahl sofort beim Loslassen und ueberschreiben
     // damit ungefragt die Zwischenablage. xterm.js markiert nur; kopiert wird erst bei Strg+C
-    // oder Rechtsklick. Das Mausrad (wheel) geht weiterhin als SGR-Sequenz an den Agenten.
+    // oder Rechtsklick. Nur das Mausrad (button === 4) geht weiter als SGR-Sequenz an den Agenten;
+    // sonstige Maus-Events (insb. mousemove unter ?1003h) wuerden ueber triggerDataEvent(..., true)
+    // onUserInput feuern und die Auswahl sofort wieder loeschen.
     if (term._core?._selectionService) {
       term._core._selectionService.shouldForceSelection = () => true;
       term._core._selectionService.disable = () => {};
       term._core._selectionService.enable();
+    }
+    if (term._core?.coreMouseService) {
+      const cms = term._core.coreMouseService;
+      const origTrigger = cms.triggerMouseEvent.bind(cms);
+      cms.triggerMouseEvent = ev => (ev.button === 4 ? origTrigger(ev) : false);
     }
     try { term.loadAddon(new WebglAddon.WebglAddon()); } catch {}
     term.onData(d => send({ t: 'input', id, d }));
