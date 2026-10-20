@@ -450,7 +450,16 @@ class Session {
 
   snapshot() {
     if (this.term && this.serializer) {
-      try { return this.serializer.serialize({ scrollback: 8000 }); } catch { return ''; }
+      try {
+        let out = this.serializer.serialize({ scrollback: 8000 });
+        // @xterm/addon-serialize serialisiert mouseTrackingMode (?1000/1002/1003h), laesst aber das
+        // Maus-Encoding (?1006h SGR / ?1016h SGR-Pixels) weg. Ohne ?1006h landet der Client nach
+        // dem Snapshot im X10-Binaermodus (onBinary) und verschluckt Rad-Scrollen + Maus-Auswahl.
+        const enc = this.term._core?.coreMouseService?.activeEncoding;
+        if (enc === 'SGR_PIXELS') out += '\x1b[?1016h';
+        else if (enc === 'SGR' || this.term.modes.mouseTrackingMode !== 'none') out += '\x1b[?1006h';
+        return out;
+      } catch { return ''; }
     }
     return state.loadScrollback(this.entry.id);
   }

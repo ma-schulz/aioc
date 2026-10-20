@@ -201,7 +201,16 @@
         fitAll(); // neu zugewiesene Panes sofort an die echte Größe anpassen
       } else if (m.t === 'snapshot') {
         const t = terms.get(m.id);
-        if (t) { t.term.reset(); if (m.data) t.term.write(m.data); }
+        if (t) {
+          t.term.reset();
+          if (m.data) {
+            t.term.write(m.data, () => {
+              if (t.term.modes.mouseTrackingMode !== 'none' && t.term._core?.coreMouseService?.activeEncoding === 'DEFAULT') {
+                t.term.write('\x1b[?1006h');
+              }
+            });
+          }
+        }
       } else if (m.t === 'data') {
         const t = terms.get(m.id);
         if (t) t.term.write(m.d);
