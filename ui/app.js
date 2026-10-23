@@ -62,6 +62,13 @@
 
   let ws = null, wsOk = false;
   let sessions = [], feed = [], recents = [], lan = { enabled: false, links: [] };
+  // Plugins (daemon/plugins.js): ihre Ansicht steht im Pane-Layout als Pseudo-Session "@plugin:<id>"
+  const PLUGIN_PREFIX = '@plugin:';
+  const pluginOf = id => (typeof id === 'string' && id.startsWith(PLUGIN_PREFIX) ? id.slice(PLUGIN_PREFIX.length) : null);
+  let plugins = []; // [{ id, name, icon, ui, css, state }] vom Daemon
+  const pluginDefs = new Map(); // id -> Definition aus der ui.js des Plugins (AiocPlugins.register)
+  const pluginViews = new Map(); // id -> { el, mounted, dirty }
+  const hasPlugin = id => plugins.some(p => p.id === id);
   let background = { url: null, opacity: 0.35 };
   // Einstellungen dieses Geräts (localStorage): Schriftgröße, Deckkraft, Layout
   let fontSize = 14, localOpacity = null, layoutRestored = false;
@@ -82,7 +89,7 @@
       // Altes Format (bis 09/2026): festes Raster mit 1, 2 oder 4 Panes
       const t = lay?.tree ? deserTree(lay.tree) : [1, 2, 4].includes(lay?.panes?.length) ? gridTree(lay.panes) : null;
       if (!t) return;
-      for (const leaf of leavesOf(t)) if (!sessions.some(s => s.id === leaf.id)) leaf.id = null;
+      for (const leaf of leavesOf(t)) if (!(pluginOf(leaf.id) ? hasPlugin(pluginOf(leaf.id)) : sessions.some(s => s.id === leaf.id))) leaf.id = null;
       tree = t;
       panes = leavesOf(tree);
       focused = Math.min(Math.max(0, lay.focused || 0), panes.length - 1);
@@ -173,6 +180,8 @@
       if (m.t === 'hello' || m.t === 'sessions') {
         notifyChanges(m.sessions, m.t === 'hello'); // vor dem Überschreiben: alter Status je Session
         sessions = m.sessions; feed = m.feed || []; recents = m.recents || recents; lan = m.lan || lan;
+        if (m.t === 'hello') { plugins = Array.isArray(m.plugins) ? m.plugins : []; loadPluginAssets(); }
+        for (const v of pluginViews.values()) v.dirty = true; // Plugins zeigen oft den Stand ihrer Sessions
         if (m.background && (m.background.url !== background.url || m.background.opacity !== background.opacity)) {
           background = m.background;
           applyBackground();
@@ -184,7 +193,7 @@
           requestAnimationFrame(() => terms.get(newest.id)?.term.focus());
         }
         if (m.t === 'hello') restoreLayout();
-        for (const p of panes) if (p.id && !sessionOf(p.id)) p.id = null;
+        for (const p of panes) if (p.id && !(pluginOf(p.id) ? hasPlugin(pluginOf(p.id)) : sessionOf(p.id))) p.id = null;
         if (!activeId() && sessions.length && panes.length === 1 && !MOBILE.matches) panes[0].id = sessions[0].id;
         // Geteilt gestartet (?split=…) und noch leer: die ersten Sessions auf die Panes verteilen
         if (m.t === 'hello' && panes.length > 1 && panes.every(p => !p.id)) {
@@ -197,8 +206,18 @@
           if (!MOBILE.matches) requestAnimationFrame(() => { const id = activeId(); if (id) terms.get(id)?.term.focus(); });
         }
         renderAll();
-        for (const p of panes) if (p.id) ensureAttached(p.id);
+        for (const p of panes) if (p.id && !pluginOf(p.id)) ensureAttached(p.id);
         fitAll(); // neu zugewiesene Panes sofort an die echte Größe anpassen
+      } else if (m.t === 'plugin') {
+        const p = plugins.find(x => x.id === m.id);
+        if (p) {
+          p.state = m.state;
+          const v = pluginViews.get(p.id);
+          if (v) v.dirty = true;
+          renderAll();
+        }
+      } else if (m.t === 'error') {
+        flashError(m.message);
       } else if (m.t === 'snapshot') {
         const t = terms.get(m.id);
         if (t) {
@@ -634,7 +653,7 @@
     panes[paneIdx].id = id;
     focused = paneIdx;
     saveLayout();
-    ensureAttached(id);
+    if (!pluginOf(id)) ensureAttached(id);
     if (MOBILE.matches) document.body.classList.add('show-term'); // Handy: Terminal statt Liste zeigen
     renderAll();
     fitAll();
@@ -809,7 +828,8 @@
   }
 
   function sortedSessions() {
-    const list = sessions.filter(FILTERS[filter] || FILTERS.all);
+    // Sessions eines Plugins stehen oben bei ihrem Plugin, nicht in den Ordnergruppen
+    const list = sessions.filter(s => !s.owner).filter(FILTERS[filter] || FILTERS.all);
     const byPlace = (a, b) => workTree(a).key.localeCompare(workTree(b).key) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt);
     if (sortMode === 'status') return [...list].sort((a, b) => (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9) || byPlace(a, b));
     if (sortMode === 'typ') return [...list].sort((a, b) => (AGENT_ORDER[a.agent] ?? 9) - (AGENT_ORDER[b.agent] ?? 9) || byPlace(a, b));
@@ -913,6 +933,7 @@
     // Sidebar-Liste
     const list = $('list');
     list.innerHTML = '';
+    renderPluginSidebar(list);
     const vis = sortedSessions();
     const byGroup = sortMode === 'ordner';
     let grp = null;
@@ -1160,12 +1181,23 @@
       if (!p.el) p.el = buildPane(p);
       const el = p.el;
       const s = sessionOf(p.id);
+      const plug = pluginOf(p.id);
+      const plugInfo = plug ? plugins.find(x => x.id === plug) : null;
       const head = el.querySelector('.phead');
       const body = el.querySelector('.pane-body');
       el.classList.toggle('focused', i === focused);
-      el.classList.toggle('nosess', !s);
-      head.hidden = !s && !multi;
-      body.querySelector('.pane-empty').style.display = s ? 'none' : 'flex';
+      el.classList.toggle('nosess', !s && !plugInfo);
+      el.classList.toggle('plug-pane', !!plugInfo);
+      el.classList.toggle('owned', !!s?.owner);
+      head.hidden = !s && !plugInfo && !multi;
+      body.querySelector('.pane-empty').style.display = s || plugInfo ? 'none' : 'flex';
+      head.querySelector('.nm').dataset.owner = s?.owner ? (plugins.find(x => x.id === s.owner)?.name || s.owner) : '';
+      if (plugInfo) {
+        head.querySelector('.nm').textContent = plugInfo.name;
+        head.querySelector('.nm').title = plugInfo.name;
+        const v = pluginView(plugInfo);
+        if (v.parentElement !== body) body.appendChild(v);
+      }
       const full = panes.length >= MAX_PANES;
       head.querySelector('.b-split-r').disabled = full;
       head.querySelector('.b-split-d').disabled = full;
@@ -1193,6 +1225,7 @@
         if (t.wrap.parentElement !== body) body.appendChild(t.wrap);
       }
     });
+    for (const [pid, v] of pluginViews) if (!panes.some(p => pluginOf(p.id) === pid && hasPlugin(pid))) v.el.remove();
     for (const [id, t] of terms) {
       const shown = panes.some(p => p.id === id);
       t.wrap.classList.toggle('active', shown);
@@ -1204,7 +1237,7 @@
   // Inline-Umbenennen in der Kopfzeile des Panes (window.prompt gibt es in Electron nicht)
   function renamePrompt(id) {
     const s = sessionOf(id);
-    if (!s) return;
+    if (!s || s.owner) return; // Sessions eines Plugins benennt nur das Plugin
     const idx = panes.findIndex(p => p.id === id);
     const nm = idx >= 0 && panes[idx].el?.querySelector('.phead .nm');
     if (!nm || nm.querySelector('input')) return;
@@ -1231,6 +1264,115 @@
       if (e.key === 'Escape') { e.preventDefault(); finish(false); }
     });
     input.addEventListener('blur', () => finish(true));
+  }
+
+  // ---------- Plugins ----------
+  // Ein Plugin bringt ui.js/ui.css mit (vom Daemon unter /plugins/<id>/ ausgeliefert). ui.js meldet
+  // sich mit AiocPlugins.register({ id, tab(state, api), mount(el, api), update(state, api) }) an:
+  // tab liefert den angepinnten Eintrag oben in der Seitenleiste ({ title, badge, hot, subline }),
+  // mount baut die Ansicht einmal auf, update zeichnet sie bei neuem Zustand oder Sessionstand nach.
+  // Die Sessions des Plugins (owner) zeigt Aioc selbst unter dem Eintrag - geschützt und markiert.
+  const mk = (tag, cls, text) => {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  };
+  const loadedAssets = new Set();
+  function loadPluginAssets() {
+    for (const p of plugins) {
+      if (p.css && !loadedAssets.has(p.css)) {
+        loadedAssets.add(p.css);
+        const l = document.createElement('link');
+        l.rel = 'stylesheet';
+        l.href = p.css;
+        document.head.appendChild(l);
+      }
+      if (p.ui && !loadedAssets.has(p.ui)) {
+        loadedAssets.add(p.ui);
+        const sc = document.createElement('script');
+        sc.src = p.ui;
+        sc.onerror = () => flashError(`Plugin ${p.name}: Oberfläche nicht ladbar`);
+        document.body.appendChild(sc);
+      }
+    }
+  }
+  window.AiocPlugins = {
+    register(def) {
+      if (!def || typeof def.id !== 'string') return;
+      pluginDefs.set(def.id, def);
+      const v = pluginViews.get(def.id);
+      if (v) v.dirty = true;
+      renderAll();
+    },
+  };
+
+  function pluginApi(id) {
+    return {
+      id,
+      send: msg => send({ t: 'plugin', id, msg: { ...msg, cols: lastSize.cols, rows: lastSize.rows } }),
+      sessions: () => sessions,
+      ownSessions: () => sessions.filter(s => s.owner === id),
+      openSession: sid => { if (sessionOf(sid)) assignToPane(focused, sid); },
+      openExternal,
+      error: flashError,
+    };
+  }
+
+  function pluginView(p) {
+    let v = pluginViews.get(p.id);
+    if (!v) {
+      v = { el: mk('div', 'plug-view'), mounted: false, dirty: true };
+      v.el.dataset.plugin = p.id;
+      pluginViews.set(p.id, v);
+    }
+    const def = pluginDefs.get(p.id);
+    if (!def) {
+      if (!v.mounted) v.el.replaceChildren(mk('div', 'plug-wait', `${p.name} lädt …`));
+      return v.el;
+    }
+    try {
+      if (!v.mounted) { v.el.replaceChildren(); def.mount?.(v.el, pluginApi(p.id)); v.mounted = true; v.dirty = true; }
+      if (v.dirty) { v.dirty = false; def.update?.(p.state, pluginApi(p.id)); }
+    } catch (err) {
+      console.error(`Plugin ${p.id}:`, err);
+      v.el.replaceChildren(mk('div', 'plug-wait', `${p.name}: ${err.message}`));
+    }
+    return v.el;
+  }
+
+  function renderPluginSidebar(list) {
+    for (const p of plugins) {
+      const def = pluginDefs.get(p.id);
+      let tab = { title: p.name };
+      try { if (def?.tab) tab = { ...tab, ...def.tab(p.state, pluginApi(p.id)) }; } catch (err) { console.error(`Plugin ${p.id}:`, err); }
+      const b = mk('button', 'sess plug-tab');
+      b.setAttribute('aria-current', panes.some(x => x.id === PLUGIN_PREFIX + p.id) ? 'true' : 'false');
+      b.append(mk('span', 'ic', p.icon), mk('span', 'nm', tab.title || p.name), mk('span', 'plug-badge' + (tab.hot ? ' hot' : ''), tab.badge || ''), mk('span', 'st', tab.subline || ''));
+      b.addEventListener('click', () => { if (Date.now() >= suppressClick) assignToPane(focused, PLUGIN_PREFIX + p.id); });
+      list.appendChild(b);
+      for (const s of sessions.filter(x => x.owner === p.id)) {
+        const r = mk('button', `sess owned ${s.status}${s.unread ? ' unread' : ''}`);
+        r.dataset.id = s.id;
+        r.setAttribute('aria-current', panes.some(x => x.id === s.id) ? 'true' : 'false');
+        r.title = `Gehört zum Plugin „${p.name}" – Umbenennen, Beenden und Entfernen nur dort`;
+        r.append(mk('span', 'ic', ICON[s.status] || '·'), mk('span', 'nm', s.name), mk('span', 'own', 'System'), mk('span', 'ag'), mk('span', 'st', s.detail || ''));
+        setAgentIcon(r.querySelector('.ag'), s.agent);
+        r.addEventListener('click', () => assignToPane(focused, s.id));
+        list.appendChild(r);
+      }
+    }
+    if (plugins.length) list.appendChild(mk('div', 'plug-sep'));
+  }
+
+  // Fehlermeldungen des Daemons (z. B. abgelehnte Aktion) kurz in der Titelleiste zeigen
+  let flashTimer = null;
+  function flashError(message) {
+    const c = $('conn');
+    c.textContent = String(message || 'Fehler');
+    c.classList.add('off');
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(renderConn, 6000);
   }
 
   // ---------- Neue Session ----------

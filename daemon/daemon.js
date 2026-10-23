@@ -12,6 +12,7 @@ const tlsUtil = require('./tls');
 const { lanLinks } = require('./lan');
 const { GitWatcher } = require('./git');
 const { createApi } = require('./api');
+const { PluginHost } = require('./plugins');
 
 const info = state.loadDaemonInfo();
 const PORT = Number(process.env.AIOC_DAEMON_PORT || info.port);
@@ -84,6 +85,8 @@ function setBackgroundOpacity(v) {
 // Branch + Arbeitsstand je Session-Ordner (nur lesend) fuer Sidebar und Pane-Kopfzeilen
 const git = new GitWatcher(() => broadcastSessions());
 
+let plugins = null; // PluginHost, angelegt sobald SessionManager und API stehen
+
 const mgr = new SessionManager(PORT, {
   onData: (id, d) => {
     for (const ws of wss.clients) if (ws.attached?.has(id)) send(ws, { t: 'data', id, d });
@@ -92,6 +95,7 @@ const mgr = new SessionManager(PORT, {
   // Statuswechsel: wartende `aioc-ctl wait` bedienen, Git-Stand zeitnah nachziehen (Agent koennte committet haben)
   onStatus: entry => {
     api.checkWaiters();
+    if (plugins) plugins.sessionsChanged();
     git.refresh(entry.cwd, 3000);
     if (entry.workCwd) git.refresh(entry.workCwd, 3000);
   },
@@ -105,6 +109,9 @@ mgr.adoptSaved();
   if (pruned.files) mgr.pushFeed(`Aufgeräumt: ${pruned.files} Scrollback-Dateien ohne Session (${(pruned.bytes / 1048576).toFixed(1)} MB)`);
 }
 const api = createApi({ mgr, info, git, isLoopback });
+// Plugins aus <AIOC_HOME>/plugins.json - ohne die Datei bleibt Aioc ohne Erweiterungen
+plugins = new PluginHost({ mgr, publish: p => broadcastPlugin(p) });
+plugins.load();
 
 function send(ws, obj) { if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} } }
 
@@ -149,7 +156,15 @@ function lanState() {
 }
 
 function stateMsg(t) {
-  return { t, sessions: mgr.toClient().map(e => ({ ...e, git: git.get(e.cwd), workGit: e.workCwd ? git.get(e.workCwd) : null })), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
+  const msg = { t, sessions: mgr.toClient().map(e => ({ ...e, git: git.get(e.cwd), workGit: e.workCwd ? git.get(e.workCwd) : null })), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
+  // Plugin-Zustände nur beim Verbindungsaufbau, danach je Plugin über 'plugin'
+  if (t === 'hello') msg.plugins = plugins.toClient();
+  return msg;
+}
+
+function broadcastPlugin(p) {
+  const msg = { t: 'plugin', id: p.id, state: p.state };
+  for (const ws of wss.clients) send(ws, msg);
 }
 
 function broadcastSessions() {
@@ -208,7 +223,7 @@ function handleRequest(req, res) {
     res.end(JSON.stringify({ ok: true, name: 'aioc', pid: process.pid, sessions: mgr.sessions.size, lan: !!lanServer }));
     return;
   }
-  const entry = STATIC[url.pathname] || VENDOR[url.pathname];
+  const entry = STATIC[url.pathname] || VENDOR[url.pathname] || plugins.file(url.pathname);
   if (entry && req.method === 'GET') {
     fs.readFile(entry[0], (err, data) => {
       if (err) { res.writeHead(404); res.end('not found'); return; }
@@ -277,6 +292,7 @@ wss.on('connection', ws => {
           break;
         case 'backgroundOpacity': setBackgroundOpacity(m.value); broadcastSessions(); break;
         case 'backgroundClear': clearBackground(); broadcastSessions(); break;
+        case 'plugin': plugins.handle(m); break;
         default: break;
       }
     } catch (err) {

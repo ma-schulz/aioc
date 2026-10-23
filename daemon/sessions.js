@@ -175,6 +175,7 @@ class Session {
   // Agenten selbst gesetzter Name setzt sich darueber hinweg (Claude-Registry: nameSource 'user',
   // gegen 'derived' fuer Claudes eigene Zusammenfassung).
   syncName() {
+    if (this.entry.owner) return; // Session eines Plugins behält den Namen, den das Plugin vergeben hat
     const cand = nameFromTitle(this.entry);
     if (!cand || cand === this.lastTitleName) return; // reiner Spinner-Wechsel: Text unveraendert
     this.lastTitleName = cand;
@@ -522,7 +523,9 @@ class SessionManager {
     }
   }
 
-  create({ agent, cwd, name, args, cols, rows }) {
+  // owner: ID des Plugins, dem die Session gehört (siehe plugins.js). Solche Sessions zeigt die
+  // Oberfläche beim Plugin; umbenennen, schließen und entfernen kann sie nur das Plugin selbst.
+  create({ agent, cwd, name, args, cols, rows, owner }) {
     if (!agents.AGENTS.includes(agent)) throw new Error('Unbekannter Agent: ' + agent);
     const id = crypto.randomBytes(5).toString('hex');
     const entry = {
@@ -532,6 +535,7 @@ class SessionManager {
       createdAt: Date.now(), order: Date.now(), status: 'starting', detail: 'startet…', statusSource: 'system',
       unread: false, title: '', agentSessionId: null, exitedAt: null, sizeInfo: null,
     };
+    if (owner) entry.owner = String(owner);
     const s = new Session(this, entry);
     this.sessions.set(id, s);
     state.rememberRecent(cwd);
@@ -555,11 +559,20 @@ class SessionManager {
     for (const s of this.sessions.values()) if (!s.proc && s.entry.status === 'exited') this.restore(s.entry.id, cols, rows);
   }
 
-  close(id) { this.sessions.get(id)?.kill(); }
+  guardOwned(s, what) {
+    if (s?.entry.owner) throw new Error(`„${s.entry.name}" gehört zum Plugin „${s.entry.owner}" und lässt sich nur dort ${what}.`);
+  }
+
+  close(id) {
+    const s = this.sessions.get(id);
+    this.guardOwned(s, 'beenden');
+    s?.kill();
+  }
 
   dispose(id) {
     const s = this.sessions.get(id);
     if (!s) return;
+    this.guardOwned(s, 'entfernen');
     s.kill();
     s.disposeFiles();
     this.sessions.delete(id);
@@ -570,6 +583,7 @@ class SessionManager {
   rename(id, name, { toAgent = true } = {}) {
     const s = this.sessions.get(id);
     if (!s || !name) return;
+    this.guardOwned(s, 'umbenennen');
     s.entry.name = String(name).slice(0, 80);
     s.entry.nameSource = 'user'; // ab jetzt nicht mehr automatisch nachziehen
     s.entry.nameAt = Date.now();

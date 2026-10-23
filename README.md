@@ -187,6 +187,34 @@ All clients load the same web UI, but each one keeps its own view: pane layout a
 
 The one thing a session cannot have twice is its terminal size. When two clients show the same session, the **smallest current viewer sets the size** (as in tmux) and the header shows who is limiting it, e.g. `⧉ Größe: Handy 60×20`. As soon as that client leaves the session — back to the list, another session, connection closed — the limit is lifted immediately and the larger window gets its size back.
 
+## Plugins
+
+Aioc itself stays terminals plus overview. Anything beyond that — say, an agent that sorts your inbox and shows cards — can live in a **plugin** outside this repository. Without `%USERPROFILE%\.aioc\plugins.json` nothing is loaded.
+
+```json
+["C:/work/my-plugin"]
+```
+
+A plugin folder holds a `plugin.json` and the files it names:
+
+```json
+{ "id": "my-plugin", "name": "My Plugin", "icon": "✉", "daemon": "daemon.js", "ui": "ui.js", "css": "ui.css" }
+```
+
+- **`daemon.js`** exports `activate(ctx)` and may return `{ handle(msg), sessionsChanged() }`. It runs inside the daemon with the daemon's rights — only list folders whose code you know. `ctx` is deliberately small:
+  - `ctx.dataDir`: `%USERPROFILE%\.aioc\<id>`
+  - `ctx.publish(state)`: send the plugin's state to every window
+  - `ctx.feed(text)`: add a line to the event feed
+  - `ctx.sessions.list()` and `ctx.sessions.create({ agent, cwd, name, args, owned })`
+  - `ctx.sessions.restore`, `ctx.sessions.prompt` and `ctx.sessions.kill`: only for sessions the plugin owns
+- **Owned sessions** (`owned: true`) are shown under the plugin's entry, marked *System*. They cannot be renamed, closed or removed from the normal controls — only by the plugin.
+- **`ui.js`** is served under `/plugins/<id>/ui.js` and registers itself with `AiocPlugins.register({ id, tab(state, api), mount(el, api), update(state, api) })`. Its parts:
+  - `tab` returns the pinned sidebar entry `{ title, badge, hot, subline }`.
+  - `mount` builds the plugin's view once. The view opens in a pane like a session.
+  - `update` redraws the view when the state or the sessions change.
+  - `api` offers `send(msg)` (arrives as `handle(msg)`), `sessions()`, `ownSessions()`, `openSession(id)`, `openExternal(url)` and `error(text)`.
+- Plugin text is often foreign input (mail, tickets). Render it with `textContent`, not `innerHTML`.
+
 ## Security
 
 - Locally the daemon listens on `127.0.0.1` only. The LAN listener is off until you switch it on, uses TLS, and every WebSocket connection needs the token.
@@ -199,7 +227,8 @@ The one thing a session cannot have twice is its terminal size. When two clients
 ```
 daemon/        the service: PTYs (node-pty/ConPTY), scrollback (headless xterm),
                status engine, persistence, hook endpoint, WebSocket protocol,
-               control API (api.js) and branch/working-tree state (git.js, read-only)
+               control API (api.js), branch/working-tree state (git.js, read-only)
+               and the plugin host (plugins.js)
 daemon/hooks/  agent-hook.js (Claude/Codex relay), aioc-pi-ext.ts (Pi extension)
 cli/ + bin/    aioc-ctl — bin/ is prepended to the PATH of Aioc sessions
 ui/            the web app the daemon serves (vanilla JS + xterm.js)
@@ -207,7 +236,7 @@ ui/agents/     agent icons; embed.js embeds them into style.css
 shell/         the Electron shell (starts the daemon if needed, loads the UI)
 ```
 
-State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\` (per session a checkpoint `<id>.txt` plus a journal `<id>.log` that new output is appended to; files whose session no longer exists are removed when the daemon starts), `daemon.json`, `window.json`, `ui-state.json` (recent folders), the background image, `tls\` (certificates) and the generated `claude-settings.json`. Set `AIOC_HOME` (and `AIOC_DAEMON_PORT`) to run a second, fully isolated profile — handy for testing.
+State lives in `%USERPROFILE%\.aioc\`: `sessions.json`, `scrollback\` (per session a checkpoint `<id>.txt` plus a journal `<id>.log` that new output is appended to; files whose session no longer exists are removed when the daemon starts), `daemon.json`, `window.json`, `ui-state.json` (recent folders), the background image, `tls\` (certificates) and the generated `claude-settings.json`, plus the optional `plugins.json` and one data folder per plugin. Set `AIOC_HOME` (and `AIOC_DAEMON_PORT`) to run a second, fully isolated profile — handy for testing.
 
 ## License
 
