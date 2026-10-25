@@ -188,7 +188,7 @@ class Session {
   // Namen liegen, und ein uebernommener Name behielte faelschlich die Einstufung "automatisch".
   applyName(cand, retries) {
     if (nameFromTitle(this.entry) !== cand) return; // Titel ist inzwischen weitergezogen
-    const meta = this.entry.agent === 'claude' ? claudeMeta.lookup(this.entry.agentSessionId, { fresh: retries < 2 }) : null;
+    const meta = this.entry.agent === 'claude' ? claudeMeta.lookup(this.entry.agentSessionId, { fresh: retries < 2, configDir: this.entry.env?.CLAUDE_CONFIG_DIR }) : null;
     // Codex schreibt nur dann einen Namen in den Titel, wenn die Unterhaltung umbenannt wurde (sonst
     // steht dort der Ordner) - dort ist jeder Titelname also von dir. Bei Claude beweist das die Registry.
     const since = this.entry.agent === 'codex' ? Date.now()
@@ -525,8 +525,12 @@ class SessionManager {
 
   // owner: ID des Plugins, dem die Session gehört (siehe plugins.js). Solche Sessions zeigt die
   // Oberfläche beim Plugin; umbenennen, schließen und entfernen kann sie nur das Plugin selbst.
-  create({ agent, cwd, name, args, cols, rows, owner }) {
+  // env: zusätzliche Umgebungsvariablen, gelten auch beim Wiederherstellen; gehen nie an die Oberfläche.
+  create({ agent, cwd, name, args, cols, rows, owner, env }) {
     if (!agents.AGENTS.includes(agent)) throw new Error('Unbekannter Agent: ' + agent);
+    if (env != null && (typeof env !== 'object' || Array.isArray(env) || Object.values(env).some(v => typeof v !== 'string'))) {
+      throw new Error('env muss ein Objekt aus Texten sein');
+    }
     const id = crypto.randomBytes(5).toString('hex');
     const entry = {
       id, agent, cwd, args: args || '',
@@ -536,6 +540,7 @@ class SessionManager {
       unread: false, title: '', agentSessionId: null, exitedAt: null, sizeInfo: null,
     };
     if (owner) entry.owner = String(owner);
+    if (env && Object.keys(env).length) entry.env = { ...env };
     const s = new Session(this, entry);
     this.sessions.set(id, s);
     state.rememberRecent(cwd);
@@ -569,10 +574,11 @@ class SessionManager {
     s?.kill();
   }
 
-  dispose(id) {
+  // owner: das Plugin selbst darf seine eigene Session entfernen
+  dispose(id, { owner } = {}) {
     const s = this.sessions.get(id);
     if (!s) return;
-    this.guardOwned(s, 'entfernen');
+    if (!owner || s.entry.owner !== owner) this.guardOwned(s, 'entfernen');
     s.kill();
     s.disposeFiles();
     this.sessions.delete(id);
@@ -652,7 +658,7 @@ class SessionManager {
 
   toClient() {
     return [...this.sessions.values()]
-      .map(s => ({ ...s.entry, running: !!s.proc }))
+      .map(({ entry: { env, ...e }, proc }) => ({ ...e, running: !!proc }))
       .sort((a, b) => a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
   }
 

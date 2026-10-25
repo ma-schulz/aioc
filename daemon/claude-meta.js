@@ -10,15 +10,17 @@ const path = require('path');
 const TTL = 2000;
 const cache = new Map(); // sessionId -> { at, value }
 
-const dir = () => path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'sessions');
+// configDir: eigenes CLAUDE_CONFIG_DIR der Session (anderes Konto), sonst das des Daemons
+const dir = configDir => path.join(configDir || process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'sessions');
 
-function scan(sessionId) {
+function scan(sessionId, configDir) {
+  const d = dir(configDir);
   let files;
-  try { files = fs.readdirSync(dir()).filter(f => f.endsWith('.json')); } catch { return null; }
+  try { files = fs.readdirSync(d).filter(f => f.endsWith('.json')); } catch { return null; }
   let best = null;
   for (const f of files) {
     try {
-      const o = JSON.parse(fs.readFileSync(path.join(dir(), f), 'utf8'));
+      const o = JSON.parse(fs.readFileSync(path.join(d, f), 'utf8'));
       // Nach einem Resume gibt es zur selben Session eine zweite (alte) PID-Datei - die juengere gilt
       if (o.sessionId === sessionId && o.name && (!best || (o.updatedAt || 0) > (best.updatedAt || 0))) best = o;
     } catch { /* Datei wird gerade geschrieben oder hat ein anderes Format */ }
@@ -27,11 +29,11 @@ function scan(sessionId) {
 }
 
 // fresh: am Cache vorbei lesen - Claude schreibt die Registry manchmal erst kurz nach dem Titel
-function lookup(sessionId, { fresh = false } = {}) {
+function lookup(sessionId, { fresh = false, configDir } = {}) {
   if (!sessionId) return null;
   const hit = cache.get(sessionId);
   if (!fresh && hit && Date.now() - hit.at < TTL) return hit.value;
-  const value = scan(sessionId);
+  const value = scan(sessionId, configDir);
   cache.set(sessionId, { at: Date.now(), value });
   return value;
 }

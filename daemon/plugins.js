@@ -83,12 +83,14 @@ class PluginHost {
       feed: text => { mgr.pushFeed(`${p.name} · ${text}`); mgr.persistAndBroadcast(); },
       sessions: {
         list: () => [...mgr.sessions.values()].map(sessionView),
-        // owned: true -> gehört dem Plugin (geschützt); sonst eine ganz normale Session
-        create: ({ agent, cwd, name, args, cols, rows, owned = false }) =>
-          sessionView(mgr.create({ agent, cwd, name, args, cols, rows, owner: owned ? p.id : undefined })),
+        // owned: true -> gehört dem Plugin (geschützt); sonst eine ganz normale Session.
+        // env: eigene Umgebungsvariablen der Session, z. B. CLAUDE_CONFIG_DIR für ein anderes Konto
+        create: ({ agent, cwd, name, args, cols, rows, owned = false, env }) =>
+          sessionView(mgr.create({ agent, cwd, name, args, cols, rows, owner: owned ? p.id : undefined, env })),
         restore: (id, cols, rows) => { own(id); mgr.restore(id, cols, rows); },
         prompt: (id, text) => own(id).sendPrompt(text),
         kill: id => own(id).kill(),
+        dispose: id => { own(id); mgr.dispose(id, { owner: p.id }); },
       },
     };
   }

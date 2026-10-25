@@ -78,7 +78,9 @@ const CODEX_POLICY = /^(--yolo|--dangerously-bypass-approvals-and-sandbox|--full
 // the agent's own conversation persistence after daemon/PC restart.
 function buildSpawn(entry, port, { resume = false } = {}) {
   const extra = splitArgs(entry.args);
-  const env = buildEnv(port, entry.id, entry.agent);
+  // Eigene Variablen der Session kommen nach dem Filter - so kann z. B. CLAUDE_CONFIG_DIR eine
+  // Session mit einem anderen Claude-Konto starten
+  const env = { ...buildEnv(port, entry.id, entry.agent), ...(entry.env || {}) };
   switch (entry.agent) {
     case 'claude': {
       const settings = writeClaudeSettings();

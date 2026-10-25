@@ -205,9 +205,10 @@ A plugin folder holds a `plugin.json` and the files it names:
   - `ctx.dataDir`: `%USERPROFILE%\.aioc\<id>`
   - `ctx.publish(state)`: send the plugin's state to every window
   - `ctx.feed(text)`: add a line to the event feed
-  - `ctx.sessions.list()` and `ctx.sessions.create({ agent, cwd, name, args, owned })`
-  - `ctx.sessions.restore`, `ctx.sessions.prompt` and `ctx.sessions.kill`: only for sessions the plugin owns
+  - `ctx.sessions.list()` and `ctx.sessions.create({ agent, cwd, name, args, owned, env })`
+  - `ctx.sessions.restore`, `ctx.sessions.prompt`, `ctx.sessions.kill` and `ctx.sessions.dispose`: only for sessions the plugin owns
 - **Owned sessions** (`owned: true`) are shown under the plugin's entry, marked *System*. They cannot be renamed, closed or removed from the normal controls — only by the plugin.
+- **`env`** adds environment variables to a session, also when it is restored, and is never sent to a window. Aioc normally strips every `CLAUDE*` variable from spawned sessions; `env` is applied afterwards. That way, `CLAUDE_CONFIG_DIR` can start a session with a different Claude account.
 - **`ui.js`** is served under `/plugins/<id>/ui.js` and registers itself with `AiocPlugins.register({ id, tab(state, api), mount(el, api), update(state, api) })`. Its parts:
   - `tab` returns the pinned sidebar entry `{ title, badge, hot, subline }`.
   - `mount` builds the plugin's view once. The view opens in a pane like a session.
