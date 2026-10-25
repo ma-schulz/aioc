@@ -10,6 +10,7 @@ const { SerializeAddon } = require('@xterm/addon-serialize');
 const state = require('./state');
 const agents = require('./agents');
 const claudeMeta = require('./claude-meta');
+const claudeAccounts = require('./claude-accounts');
 
 const OSC_TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // Taste, mit der der Agent ein Bild aus der System-Zwischenablage holt (verifiziert 31.08.2026)
@@ -658,7 +659,7 @@ class SessionManager {
 
   toClient() {
     return [...this.sessions.values()]
-      .map(({ entry: { env, ...e }, proc }) => ({ ...e, running: !!proc }))
+      .map(({ entry: { env, ...e }, proc }) => ({ ...e, running: !!proc, konto: claudeAccounts.forDir(env?.CLAUDE_CONFIG_DIR) }))
       .sort((a, b) => a.cwd.toLowerCase().localeCompare(b.cwd.toLowerCase()) || (a.order ?? a.createdAt) - (b.order ?? b.createdAt));
   }
 

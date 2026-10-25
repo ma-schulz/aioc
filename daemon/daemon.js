@@ -13,6 +13,7 @@ const { lanLinks } = require('./lan');
 const { GitWatcher } = require('./git');
 const { createApi } = require('./api');
 const { PluginHost } = require('./plugins');
+const claudeAccounts = require('./claude-accounts');
 
 const info = state.loadDaemonInfo();
 const PORT = Number(process.env.AIOC_DAEMON_PORT || info.port);
@@ -158,7 +159,7 @@ function lanState() {
 function stateMsg(t) {
   const msg = { t, sessions: mgr.toClient().map(e => ({ ...e, git: git.get(e.cwd), workGit: e.workCwd ? git.get(e.workCwd) : null })), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
   // Plugin-Zustände nur beim Verbindungsaufbau, danach je Plugin über 'plugin'
-  if (t === 'hello') msg.plugins = plugins.toClient();
+  if (t === 'hello') { msg.plugins = plugins.toClient(); msg.konten = claudeAccounts.toClient(); }
   return msg;
 }
 
@@ -275,7 +276,10 @@ wss.on('connection', ws => {
         case 'resize':
           if (s && m.cols > 1 && m.rows > 1) { ws.attached.add(m.id); ws.sizes.set(m.id, { cols: m.cols, rows: m.rows }); recomputeSize(m.id); }
           break;
-        case 'create': mgr.create({ agent: m.agent, cwd: m.cwd, name: m.name, args: m.args, cols: m.cols, rows: m.rows }); break;
+        case 'create':
+          mgr.create({ agent: m.agent, cwd: m.cwd, name: m.name, args: m.args, cols: m.cols, rows: m.rows, env: m.agent === 'claude' ? claudeAccounts.envFor(m.konto) : undefined });
+          break;
+        case 'konten': send(ws, { t: 'konten', konten: claudeAccounts.toClient({ fresh: true }) }); break;
         case 'restore': mgr.restore(m.id, m.cols, m.rows); break;
         case 'restoreAll': mgr.restoreAll(m.cols, m.rows); break;
         case 'close': mgr.close(m.id); break;

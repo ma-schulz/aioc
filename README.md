@@ -89,6 +89,14 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 - **⚙ Background image and per-device settings:** pick an image (stored by the daemon, so remote windows show it too), and set opacity and terminal font size for *this* device — like `backgroundImage` in Windows Terminal.
 - **Close** ends the process (asks first). **Remove** deletes an exited session and its scrollback from the list.
 
+### Several Claude accounts
+
+Claude Code keeps its login in a configuration folder. Starting `claude` with `CLAUDE_CONFIG_DIR=%USERPROFILE%\.claude-<name>` creates a second folder with its own login, for example for a second subscription. Aioc finds every such folder that contains a `.claude.json`. When there is more than one, the **+ Neu** dialog shows a **Konto** list for Claude sessions with each folder's organisation and e-mail address, read from `.claude.json`. The choice is remembered per folder on this device.
+
+- A session with its own account carries a small tag with the organisation name, in the sidebar and in the header. The default account `%USERPROFILE%\.claude` stays unmarked.
+- The account stays with the session when it is restored.
+- Each folder has its own settings, MCP servers and memory. To share skills or a project's memory, link the subfolders with junctions.
+
 ### After a reboot
 
 Start Aioc. Every previous session is listed as *"vor Neustart · wiederherstellbar"* with its full scrollback. Click **Wiederherstellen** on a session (or **Alle wiederherstellen** at the top of the list) to relaunch the agent in the same folder with its previous conversation.
@@ -228,8 +236,8 @@ A plugin folder holds a `plugin.json` and the files it names:
 ```
 daemon/        the service: PTYs (node-pty/ConPTY), scrollback (headless xterm),
                status engine, persistence, hook endpoint, WebSocket protocol,
-               control API (api.js), branch/working-tree state (git.js, read-only)
-               and the plugin host (plugins.js)
+               control API (api.js), branch/working-tree state (git.js, read-only),
+               Claude accounts (claude-accounts.js) and the plugin host (plugins.js)
 daemon/hooks/  agent-hook.js (Claude/Codex relay), aioc-pi-ext.ts (Pi extension)
 cli/ + bin/    aioc-ctl — bin/ is prepended to the PATH of Aioc sessions
 ui/            the web app the daemon serves (vanilla JS + xterm.js)

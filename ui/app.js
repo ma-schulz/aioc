@@ -62,6 +62,7 @@
 
   let ws = null, wsOk = false;
   let sessions = [], feed = [], recents = [], lan = { enabled: false, links: [] };
+  let konten = []; // Claude-Konten (Konfigurationsordner mit eigener Anmeldung), siehe claude-accounts.js
   // Plugins (daemon/plugins.js): ihre Ansicht steht im Pane-Layout als Pseudo-Session "@plugin:<id>"
   const PLUGIN_PREFIX = '@plugin:';
   const pluginOf = id => (typeof id === 'string' && id.startsWith(PLUGIN_PREFIX) ? id.slice(PLUGIN_PREFIX.length) : null);
@@ -180,7 +181,10 @@
       if (m.t === 'hello' || m.t === 'sessions') {
         notifyChanges(m.sessions, m.t === 'hello'); // vor dem Überschreiben: alter Status je Session
         sessions = m.sessions; feed = m.feed || []; recents = m.recents || recents; lan = m.lan || lan;
-        if (m.t === 'hello') { plugins = Array.isArray(m.plugins) ? m.plugins : []; loadPluginAssets(); }
+        if (m.t === 'hello') {
+          plugins = Array.isArray(m.plugins) ? m.plugins : []; loadPluginAssets();
+          konten = Array.isArray(m.konten) ? m.konten : [];
+        }
         for (const v of pluginViews.values()) v.dirty = true; // Plugins zeigen oft den Stand ihrer Sessions
         if (m.background && (m.background.url !== background.url || m.background.opacity !== background.opacity)) {
           background = m.background;
@@ -216,6 +220,9 @@
           if (v) v.dirty = true;
           renderAll();
         }
+      } else if (m.t === 'konten') {
+        konten = Array.isArray(m.konten) ? m.konten : [];
+        renderKonten(true);
       } else if (m.t === 'error') {
         flashError(m.message);
       } else if (m.t === 'snapshot') {
@@ -975,6 +982,7 @@
       b.querySelector('.ic').textContent = ICON[s.status] || '·';
       b.querySelector('.nm').textContent = s.name;
       b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
+      if (s.konto) b.querySelector('.nm').append(kontoChip(s.konto));
       setAgentIcon(b.querySelector('.ag'), s.agent);
       const st = b.querySelector('.st');
       st.title = `${wtree.dir}\n${s.detail || ''}`;
@@ -1215,7 +1223,7 @@
         cwdEl.textContent = wtree.moved ? wtree.dir : s.cwd;
         cwdEl.title = wtree.moved ? `Arbeitet in ${wtree.dir}\nGestartet in ${s.cwd}` : s.cwd;
         fillGit(head.querySelector('.br'), wtree.git);
-        head.querySelector('.sid').textContent = s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : '';
+        head.querySelector('.sid').textContent = [s.konto ? 'Konto ' + s.konto.label : '', s.agentSessionId ? 'session ' + String(s.agentSessionId).slice(0, 8) + '…' : ''].filter(Boolean).join(' · ');
         head.querySelector('.lim').textContent = s.sizeInfo?.limitedBy ? '⧉ Größe: ' + s.sizeInfo.limitedBy : '';
         head.querySelector('.b-close').hidden = !s.running;
         head.querySelector('.b-restore').hidden = !!s.running;
@@ -1356,7 +1364,9 @@
         r.dataset.id = s.id;
         r.setAttribute('aria-current', panes.some(x => x.id === s.id) ? 'true' : 'false');
         r.title = `Gehört zum Plugin „${p.name}" – Umbenennen, Beenden und Entfernen nur dort`;
-        r.append(mk('span', 'ic', ICON[s.status] || '·'), mk('span', 'nm', s.name), mk('span', 'own', 'System'), mk('span', 'ag'), mk('span', 'st', s.detail || ''));
+        const nm = mk('span', 'nm', s.name);
+        if (s.konto) nm.append(kontoChip(s.konto));
+        r.append(mk('span', 'ic', ICON[s.status] || '·'), nm, mk('span', 'own', 'System'), mk('span', 'ag'), mk('span', 'st', s.detail || ''));
         setAgentIcon(r.querySelector('.ag'), s.agent);
         r.addEventListener('click', () => assignToPane(focused, s.id));
         list.appendChild(r);
@@ -1381,20 +1391,61 @@
     $('f-cwd').value = recents[0] || '';
     $('f-name').value = '';
     $('f-args').value = '';
+    renderKonten();
+    send({ t: 'konten' }); // frisch einlesen: Anmeldungen können sich seit dem Verbindungsaufbau geändert haben
     $('newdlg').showModal();
     $('f-cwd').focus();
   }
+
+  // Konto je Ordner merken (dieses Gerät): wer in einem Ordner einmal ein Konto wählt, bekommt es dort wieder
+  const kontoKey = cwd => cwd.trim().replace(/[\\/]+$/, '').toLowerCase();
+  function kontoMemory() { try { return JSON.parse(localStorage.getItem('aioc-konto') || '{}'); } catch { return {}; } }
+  function kontoLabel(k) {
+    const name = k.org || k.id;
+    return `${name}${k.email ? ' · ' + k.email : ''}${k.id === 'standard' ? ' (Standard)' : ` [${k.id}]`}${k.angemeldet ? '' : ' – nicht angemeldet'}`;
+  }
+  // Kennzeichen einer Session, die mit einem eigenen Konto läuft (das Standardkonto bleibt unmarkiert)
+  function kontoChip(k) {
+    const c = mk('span', 'konto', k.label);
+    c.title = 'Claude-Konto: ' + k.label;
+    return c;
+  }
+  // keep: aktuelle Auswahl behalten (Liste neu eingelesen); sonst das gemerkte Konto des Ordners
+  function renderKonten(keep = false) {
+    const sel = $('f-konto');
+    const show = dlgAgent === 'claude' && konten.length > 1;
+    document.querySelectorAll('.konto-row').forEach(x => { x.hidden = !show; });
+    const current = sel.value;
+    sel.replaceChildren(...konten.map(k => {
+      const o = document.createElement('option');
+      o.value = k.id; o.textContent = kontoLabel(k);
+      return o;
+    }));
+    const wanted = (keep && current) || kontoMemory()[kontoKey($('f-cwd').value)] || 'standard';
+    sel.value = konten.some(k => k.id === wanted) ? wanted : 'standard';
+  }
+  $('f-cwd').addEventListener('input', () => {
+    const k = kontoMemory()[kontoKey($('f-cwd').value)];
+    if (k && konten.some(x => x.id === k)) $('f-konto').value = k;
+  });
   $('agentseg').addEventListener('click', e => {
     const b = e.target.closest('button[data-a]');
     if (!b) return;
     dlgAgent = b.dataset.a;
     document.querySelectorAll('#agentseg button').forEach(x => x.classList.toggle('on', x === b));
+    renderKonten(true);
   });
   $('newform').addEventListener('submit', () => {
     const cwd = $('f-cwd').value.trim();
     if (!cwd) return;
     pendingSelectNew = true;
-    send({ t: 'create', agent: dlgAgent, cwd, name: $('f-name').value.trim(), args: $('f-args').value.trim(), cols: lastSize.cols, rows: lastSize.rows });
+    const konto = dlgAgent === 'claude' && konten.length > 1 ? $('f-konto').value : undefined;
+    if (konto) {
+      const mem = kontoMemory();
+      mem[kontoKey(cwd)] = konto;
+      try { localStorage.setItem('aioc-konto', JSON.stringify(mem)); } catch {}
+    }
+    send({ t: 'create', agent: dlgAgent, cwd, name: $('f-name').value.trim(), args: $('f-args').value.trim(), konto, cols: lastSize.cols, rows: lastSize.rows });
   });
   $('f-cancel').addEventListener('click', () => $('newdlg').close());
   $('newbtn').addEventListener('click', openNew);
