@@ -55,7 +55,7 @@ function codexHookArgs() {
   const cmd = `node ${fwd(HOOK)} codex`;
   const mk = ev => `hooks.${ev}=[{hooks=[{type='command',command='${cmd}'}]}]`;
   const out = [];
-  for (const ev of ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop']) out.push('-c', mk(ev));
+  for (const ev of ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest', 'Stop']) out.push('-c', mk(ev));
   return out;
 }
 

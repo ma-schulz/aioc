@@ -118,6 +118,77 @@ function readAgyLatestStep(cid) {
   return null;
 }
 
+// Findet die Codex-Rollout-Datei (~/.codex/sessions/YYYY/MM/DD/rollout-*<id>.jsonl) zu einer Session-ID
+const codexFileCache = new Map();
+function findCodexRolloutFile(sid) {
+  if (!sid) return null;
+  const cached = codexFileCache.get(sid);
+  if (cached && fs.existsSync(cached)) return cached;
+  const root = path.join(os.homedir(), '.codex', 'sessions');
+  try {
+    const years = fs.readdirSync(root).sort().reverse();
+    for (const y of years.slice(0, 2)) {
+      const yDir = path.join(root, y);
+      const months = fs.readdirSync(yDir).sort().reverse();
+      for (const m of months.slice(0, 2)) {
+        const mDir = path.join(yDir, m);
+        const days = fs.readdirSync(mDir).sort().reverse();
+        for (const d of days.slice(0, 7)) {
+          const dDir = path.join(mDir, d);
+          const hit = fs.readdirSync(dDir).find(f => f.includes(sid) && f.endsWith('.jsonl'));
+          if (hit) {
+            const full = path.join(dDir, hit);
+            codexFileCache.set(sid, full);
+            return full;
+          }
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+// Liest den letzten Tool-/Plan-Schritt einer laufenden Codex-Session aus deren Rollout-Datei
+function readCodexLatestStep(sid) {
+  const rf = findCodexRolloutFile(sid);
+  if (!rf) return null;
+  try {
+    const st = fs.statSync(rf);
+    if (!st.size) return null;
+    const len = Math.min(st.size, 32768);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(rf, 'r');
+    try { fs.readSync(fd, buf, 0, len, st.size - len); } finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf8').trim().split('\n');
+    let todo = null, step = null;
+    for (const l of lines) {
+      let o;
+      try { o = JSON.parse(l); } catch { continue; }
+      const p = o.payload;
+      if (!p) continue;
+      if (p.type === 'custom_tool_call' || p.type === 'function_call') {
+        const name = String(p.name || '');
+        const rawIn = typeof p.input === 'string' ? p.input : typeof p.arguments === 'string' ? p.arguments : JSON.stringify(p.input || p.arguments || '');
+        if (name === 'update_plan' || rawIn.includes('update_plan')) {
+          const m = rawIn.match(/"step"\s*:\s*"([^"]+)"/);
+          if (m) todo = `☑ ${m[1].slice(0, 70)}`;
+        } else if (name.includes('spawn_agent') || rawIn.includes('spawn_agent')) {
+          const m = rawIn.match(/"(?:task_name|name|role|prompt)"\s*:\s*"([^"]+)"/);
+          step = `👥 Subagent: ${(m ? m[1] : 'startet').slice(0, 70)}`;
+        } else if (name === 'exec' || name === 'shell' || name === 'exec_command') {
+          const m = rawIn.match(/cmd\s*:\s*"([^"]+)"/);
+          const cmd = (m ? m[1] : rawIn).replace(/\\n/g, ' ').replace(/\\\\/g, '\\').trim();
+          step = `$ ${cmd.slice(0, 80)}`;
+        } else if (name) {
+          step = `🔧 ${name.replace(/^functions\./, '')}`;
+        }
+      }
+    }
+    return [todo, step].filter(Boolean).join(' · ') || null;
+  } catch {}
+  return null;
+}
+
 // Namensvorschlag aus dem Terminaltitel: Claude schreibt dort seinen Sessionnamen - nach /rename den
 // von dir gesetzten, sonst seinen selbst erzeugten Titel. Codex schreibt nur den Ordner, pwsh einen
 // Pfad; beides taugt nicht als Name.
@@ -136,7 +207,8 @@ function nameFromTitle(entry) {
 // Lesbare Kurzbeschreibung eines Tool-Aufrufs fuer die linke Seitenleiste (statt pauschal "arbeitet")
 function formatToolDetail(toolName, input = {}) {
   const base = p => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
-  switch (toolName) {
+  const cleanName = String(toolName || '').replace(/^(?:functions|collaboration)\./, '');
+  switch (cleanName) {
     case 'TodoWrite': {
       const todos = Array.isArray(input.todos) ? input.todos : [];
       const active = todos.find(t => t.status === 'in_progress') || todos.find(t => t.status === 'pending');
@@ -147,53 +219,96 @@ function formatToolDetail(toolName, input = {}) {
       }
       return null;
     }
+    case 'update_plan': {
+      const plan = Array.isArray(input.plan) ? input.plan : [];
+      const active = plan.find(p => p.status === 'in_progress') || plan.find(p => p.status === 'pending');
+      const done = plan.filter(p => p.status === 'completed').length;
+      if (active?.step) return `☑ ${done}/${plan.length} · ${String(active.step).trim()}`.slice(0, 110);
+      return null;
+    }
     case 'TaskCreate':
     case 'TaskUpdate': {
       const subj = String(input.subject || input.description || '').trim();
       return subj ? `☑ ${subj.slice(0, 95)}` : null;
     }
     case 'Agent':
-    case 'Task': {
-      const desc = String(input.description || input.subagent_type || 'Subagent').trim();
+    case 'Task':
+    case 'spawn_agent':
+    case 'followup_task': {
+      const desc = String(input.description || input.subagent_type || input.task_name || input.name || input.role || 'Subagent').trim();
       return `👥 Subagent: ${desc.slice(0, 90)}`;
     }
+    case 'subagent': {
+      if (Array.isArray(input.chain) && input.chain.length > 0) {
+        const agents = input.chain.map(c => c.agent).filter(Boolean).join(' → ');
+        return `👥 Subagent-Kette (${input.chain.length}): ${agents}`.slice(0, 100);
+      }
+      if (Array.isArray(input.tasks) && input.tasks.length > 0) {
+        const agents = input.tasks.map(t => t.agent).filter(Boolean).join(', ');
+        return `👥 ${input.tasks.length} Subagenten parallel (${agents})`.slice(0, 100);
+      }
+      const ag = String(input.agent || 'subagent').trim();
+      const tsk = String(input.task || '').trim().split('\n')[0];
+      return tsk ? `👥 Subagent ${ag}: ${tsk.slice(0, 75)}` : `👥 Subagent: ${ag}`;
+    }
     case 'Bash':
-    case 'PowerShell': {
+    case 'PowerShell':
+    case 'bash':
+    case 'exec':
+    case 'exec_command':
+    case 'shell': {
       const desc = String(input.description || '').trim();
       if (desc) return `⚡ ${desc.slice(0, 95)}`;
-      const cmd = String(input.command || '').trim().split('\n')[0].replace(/\s+/g, ' ');
+      const cmd = String(input.command || input.cmd || '').trim().split('\n')[0].replace(/\s+/g, ' ');
       return cmd ? `$ ${cmd.slice(0, 85)}` : '⚡ führt Befehl aus';
     }
-    case 'Read': {
+    case 'Read':
+    case 'read': {
       const f = base(input.file_path || input.path);
       return f ? `📖 Liest ${f}` : '📖 Liest Datei';
     }
     case 'Edit':
-    case 'MultiEdit': {
+    case 'MultiEdit':
+    case 'edit':
+    case 'multi_edit':
+    case 'apply_patch': {
       const f = base(input.file_path || input.path);
       return f ? `✏️ Bearbeitet ${f}` : '✏️ Bearbeitet Datei';
     }
-    case 'Write': {
+    case 'Write':
+    case 'write': {
       const f = base(input.file_path || input.path);
       return f ? `📝 Schreibt ${f}` : '📝 Schreibt Datei';
     }
-    case 'Grep': {
+    case 'Grep':
+    case 'grep': {
       const pat = String(input.pattern || '').trim();
       return pat ? `🔍 Sucht „${pat.slice(0, 50)}"` : '🔍 Durchsucht Code';
     }
-    case 'Glob': {
-      const pat = String(input.pattern || '').trim();
+    case 'Glob':
+    case 'glob':
+    case 'find': {
+      const pat = String(input.pattern || input.path || '').trim();
       return pat ? `🗂️ Dateien ${pat.slice(0, 50)}` : '🗂️ Sucht Dateien';
     }
-    case 'WebSearch': {
+    case 'ls': {
+      const f = base(input.path) || '.';
+      return `🗂️ Verzeichnis ${f}`;
+    }
+    case 'WebSearch':
+    case 'web_search': {
       const q = String(input.query || '').trim();
       return q ? `🌐 Sucht „${q.slice(0, 55)}"` : '🌐 Websuche';
     }
     case 'WebFetch':
+    case 'web_fetch':
       return '🌐 Lädt Webseite';
     case 'ListAgents':
+    case 'list_agents':
+    case 'wait_agent':
       return '👥 Prüft Subagenten';
     case 'SendMessage':
+    case 'send_message':
       return '💬 Nachricht an Agenten';
     default: {
       const m = String(toolName || '').match(/^mcp__([^_]+(?:_[^_]+)?)__(.+)$/);
@@ -203,7 +318,7 @@ function formatToolDetail(toolName, input = {}) {
         const hint = input.id || input.pullRequestId || input.workItemId || input.query || '';
         return `🔌 ${srv}: ${act}${hint ? ' #' + String(hint).slice(0, 25) : ''}`.slice(0, 100);
       }
-      return toolName ? `🔧 ${toolName}` : null;
+      return cleanName ? `🔧 ${cleanName}` : null;
     }
   }
 }
@@ -428,11 +543,19 @@ class Session {
     if (this.agyPollTimer) return;
     this.agyPollTimer = setInterval(() => {
       if (!this.proc || this.entry.status !== 'running') { this.stopAgyPoll(); return; }
-      if (!this.entry.agentSessionId) this.entry.agentSessionId = lookupAgyConversationId(this.entry.cwd);
-      const step = readAgyLatestStep(this.entry.agentSessionId);
-      if (step && step !== this.entry.detail) {
-        this.entry.detail = step;
-        this.mgr.persistAndBroadcast();
+      if (this.entry.agent === 'agy') {
+        if (!this.entry.agentSessionId) this.entry.agentSessionId = lookupAgyConversationId(this.entry.cwd);
+        const step = readAgyLatestStep(this.entry.agentSessionId);
+        if (step && step !== this.entry.detail) {
+          this.entry.detail = step;
+          this.mgr.persistAndBroadcast();
+        }
+      } else if (this.entry.agent === 'codex') {
+        const step = readCodexLatestStep(this.entry.agentSessionId);
+        if (step && step !== this.entry.detail) {
+          this.entry.detail = step;
+          this.mgr.persistAndBroadcast();
+        }
       }
     }, 2000);
     this.agyPollTimer.unref?.();
@@ -448,6 +571,10 @@ class Session {
     this.stopAgyPoll();
     clearTimeout(this.nameWriteTimer);
     clearTimeout(this.heurTimer);
+    if (Array.isArray(this.entry.piSubagents)) {
+      const now = Date.now();
+      for (const sub of this.entry.piSubagents) { sub.status = 'done'; sub.mtimeMs = now; }
+    }
     this.entry.exitedAt = Date.now();
     this.setStatus('exited', `Prozess beendet (Exit ${e.exitCode})`, 'system');
     this.mgr.emitData(this.entry.id, `\r\n\x1b[90mProzess beendet (Exit ${e.exitCode}) · Scrollback bleibt erhalten\x1b[0m\r\n`);
@@ -477,6 +604,7 @@ class Session {
         delete this.entry.todo;
         const pText = typeof payload.prompt === 'string' ? payload.prompt.trim().split('\n')[0].slice(0, 80) : '';
         this.setStatus('running', pText ? `💭 ${pText}` : 'arbeitet', 'hook');
+        if (this.entry.agent === 'codex') this.startAgyPoll();
         break;
       }
       case 'PreToolUse': {
@@ -489,13 +617,86 @@ class Session {
           this.setStatus('waiting', q ? `${prefix}: ${q}` : prefix, 'hook');
           break;
         }
+        if (tool === 'subagent' && this.entry.agent === 'pi') {
+          const now = Date.now();
+          const items = Array.isArray(input.tasks) ? input.tasks
+            : Array.isArray(input.chain) ? input.chain
+            : input.agent ? [{ agent: input.agent, task: input.task }] : [];
+          this.entry.piSubagents = items.slice(0, 4).map((it, idx) => ({
+            id: `${this.entry.id}-pi-${idx}`,
+            parentId: this.entry.id,
+            agent: 'pi',
+            name: it.agent || `sub-${idx + 1}`,
+            role: it.agent || 'subagent',
+            model: '',
+            status: 'running',
+            detail: String(it.task || 'arbeitet im Cubicle').trim().split('\n')[0].slice(0, 80),
+            mtimeMs: now,
+          }));
+          this.mgr.emitStatus(this.entry);
+        }
         const step = formatToolDetail(tool, input);
-        if (tool === 'TodoWrite' || tool === 'TaskCreate' || tool === 'TaskUpdate') {
+        if (tool === 'TodoWrite' || tool === 'TaskCreate' || tool === 'TaskUpdate' || tool === 'update_plan') {
           if (step) this.entry.todo = step;
-          else if (tool === 'TodoWrite') delete this.entry.todo;
+          else if (tool === 'TodoWrite' || tool === 'update_plan') delete this.entry.todo;
         }
         const detail = [this.entry.todo, step && step !== this.entry.todo ? step : ''].filter(Boolean).join(' · ') || 'arbeitet';
         this.setStatus('running', detail, 'hook');
+        if (this.entry.agent === 'codex') this.startAgyPoll();
+        break;
+      }
+      case 'PiSubagentUpdate': {
+        const now = Date.now();
+        const results = Array.isArray(payload.results) ? payload.results : [];
+        if (results.length > 0) {
+          this.entry.piSubagents = results.slice(0, 4).map((r, idx) => {
+            const running = r.exitCode === -1 || r.exitCode === undefined || r.exitCode === null;
+            return {
+              id: `${this.entry.id}-pi-${idx}`,
+              parentId: this.entry.id,
+              agent: 'pi',
+              name: r.agent || `sub-${idx + 1}`,
+              role: r.agent || 'subagent',
+              model: r.model || '',
+              status: running ? 'running' : 'done',
+              detail: running ? String(r.task || 'arbeitet im Cubicle').trim().split('\n')[0].slice(0, 80) : 'Aufgabe erledigt',
+              mtimeMs: now,
+            };
+          });
+          const active = this.entry.piSubagents.filter(s => s.status === 'running');
+          if (active.length > 0) {
+            const subStep = active.length === 1
+              ? `👥 Subagent ${active[0].name}: ${active[0].detail.slice(0, 65)}`
+              : `👥 ${active.length}/${this.entry.piSubagents.length} Subagenten aktiv (${active.map(a => a.name).join(', ')})`;
+            const detail = [this.entry.todo, subStep].filter(Boolean).join(' · ');
+            this.setStatus('running', detail, 'hook');
+          } else {
+            this.mgr.persistAndBroadcast();
+          }
+          this.mgr.emitStatus(this.entry);
+        }
+        break;
+      }
+      case 'PiSubagentEnd': {
+        const now = Date.now();
+        const results = Array.isArray(payload.results) ? payload.results : [];
+        if (results.length > 0) {
+          this.entry.piSubagents = results.slice(0, 4).map((r, idx) => ({
+            id: `${this.entry.id}-pi-${idx}`,
+            parentId: this.entry.id,
+            agent: 'pi',
+            name: r.agent || `sub-${idx + 1}`,
+            role: r.agent || 'subagent',
+            model: r.model || '',
+            status: 'done',
+            detail: 'Aufgabe erledigt',
+            mtimeMs: now,
+          }));
+        } else if (Array.isArray(this.entry.piSubagents)) {
+          for (const sub of this.entry.piSubagents) { sub.status = 'done'; sub.mtimeMs = now; }
+        }
+        this.mgr.persistAndBroadcast();
+        this.mgr.emitStatus(this.entry);
         break;
       }
       case 'Elicitation':
@@ -505,6 +706,7 @@ class Session {
         if (payload.tool_name === 'AskUserQuestion') this.setStatus('running', this.entry.todo || 'arbeitet', 'hook');
         break;
       case 'PermissionRequest': {
+        this.stopAgyPoll();
         const tool = payload.tool_name || '';
         if (tool === 'AskUserQuestion') {
           // Folgt direkt auf PreToolUse: dieselbe Rückfrage, keine Freigabe
@@ -529,7 +731,12 @@ class Session {
         break;
       }
       case 'Stop': {
+        this.stopAgyPoll();
         delete this.entry.todo;
+        if (Array.isArray(this.entry.piSubagents)) {
+          const now = Date.now();
+          for (const sub of this.entry.piSubagents) { sub.status = 'done'; sub.mtimeMs = now; }
+        }
         let detail = 'fertig';
         const last = payload.last_assistant_message;
         if (typeof last === 'string' && last.trim()) {

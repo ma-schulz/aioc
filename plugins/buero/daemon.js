@@ -1,6 +1,7 @@
 // Aioc-Plugin „Pixel-Büro" (Daemon): Liest aktive und kürzlich beendete Subagenten
 // der laufenden Sessions aus (Claude Code: subagents/*.meta.json + *.jsonl;
-// Antigravity: invoke_subagent in transcript.jsonl) und veröffentlicht sie an die UI,
+// Antigravity: invoke_subagent in transcript.jsonl; Codex: spawn_agent in rollout-*.jsonl;
+// Pi: Live-Events der Subagent-Extension via aioc-pi-ext.ts) und veröffentlicht sie an die UI,
 // damit sie als kleine Helfer-Figuren im selben Cubicle wie der Haupt-Agent erscheinen.
 const fs = require('fs');
 const os = require('os');
@@ -139,6 +140,91 @@ function scanAgySubagents(session, now) {
   return [...subMap.values()].slice(-4);
 }
 
+const codexFileCache = new Map();
+function findCodexRolloutFile(sid) {
+  if (!sid) return null;
+  const cached = codexFileCache.get(sid);
+  if (cached && fs.existsSync(cached)) return cached;
+  const root = path.join(os.homedir(), '.codex', 'sessions');
+  try {
+    const years = fs.readdirSync(root).sort().reverse();
+    for (const y of years.slice(0, 2)) {
+      const yDir = path.join(root, y);
+      const months = fs.readdirSync(yDir).sort().reverse();
+      for (const m of months.slice(0, 2)) {
+        const mDir = path.join(yDir, m);
+        const days = fs.readdirSync(mDir).sort().reverse();
+        for (const d of days.slice(0, 7)) {
+          const dDir = path.join(mDir, d);
+          const hit = fs.readdirSync(dDir).find(f => f.includes(sid) && f.endsWith('.jsonl'));
+          if (hit) {
+            const full = path.join(dDir, hit);
+            codexFileCache.set(sid, full);
+            return full;
+          }
+        }
+      }
+    }
+  } catch {}
+  return null;
+}
+
+function scanCodexSubagents(session, now) {
+  const rf = findCodexRolloutFile(session.agentSessionId);
+  if (!rf) return [];
+  const tail = readTail(rf, 65536);
+  if (!tail || now - tail.mtimeMs > RECENT_DONE_MS) return [];
+
+  const subMap = new Map();
+  let idx = 0;
+  for (const line of tail.text.split('\n')) {
+    if (!line.includes('spawn_agent') && !line.includes('followup_task')) continue;
+    let obj;
+    try { obj = JSON.parse(line); } catch { continue; }
+    const p = obj.payload;
+    if (!p || (p.type !== 'custom_tool_call' && p.type !== 'function_call')) continue;
+    const raw = typeof p.input === 'string' ? p.input : typeof p.arguments === 'string' ? p.arguments : JSON.stringify(p.input || p.arguments || '');
+    if (!String(p.name || '').includes('spawn_agent') && !String(p.name || '').includes('followup_task') && !raw.includes('spawn_agent')) continue;
+    const mName = raw.match(/"(?:task_name|name|role)"\s*:\s*"([^"]+)"/);
+    const mPrompt = raw.match(/"(?:prompt|message)"\s*:\s*"([^"]+)"/);
+    const label = mName ? mName[1] : `sub-${++idx}`;
+    const detail = mPrompt ? mPrompt[1].slice(0, 80) : label;
+    const isRunning = session.status === 'running' && (now - tail.mtimeMs < RUNNING_STALE_MS);
+    if (!isRunning && now - tail.mtimeMs > 90 * 1000) continue;
+    subMap.set(label, {
+      id: `${session.id}-codex-${label}`,
+      parentId: session.id,
+      agent: 'codex',
+      name: label,
+      role: 'subagent',
+      model: '',
+      status: isRunning ? 'running' : 'done',
+      detail: isRunning ? detail : 'Aufgabe erledigt',
+      mtimeMs: tail.mtimeMs,
+    });
+  }
+  return [...subMap.values()].slice(-4);
+}
+
+function scanPiSubagents(session, saved, now) {
+  const list = Array.isArray(saved?.piSubagents) ? saved.piSubagents : [];
+  if (!list.length) return [];
+  const result = [];
+  for (const sub of list) {
+    const age = now - (sub.mtimeMs || now);
+    const isRunning = sub.status === 'running' && session.status === 'running' && age < RUNNING_STALE_MS;
+    if (!isRunning && age > 90 * 1000) continue;
+    result.push({
+      ...sub,
+      parentId: session.id,
+      agent: 'pi',
+      status: isRunning ? 'running' : 'done',
+      detail: isRunning ? (sub.detail || 'arbeitet im Cubicle') : 'Aufgabe erledigt',
+    });
+  }
+  return result.slice(0, 4);
+}
+
 function activate(ctx) {
   let lastJson = '';
 
@@ -174,6 +260,8 @@ function activate(ctx) {
       let subs = [];
       if (s.agent === 'claude') subs = scanClaudeSubagents(merged, configDirs, now);
       else if (s.agent === 'agy') subs = scanAgySubagents(merged, now);
+      else if (s.agent === 'codex') subs = scanCodexSubagents(merged, now);
+      else if (s.agent === 'pi') subs = scanPiSubagents(merged, saved, now);
 
       if (subs.length) {
         bySession[s.id] = subs;
