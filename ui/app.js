@@ -29,13 +29,13 @@
   const STATUS_ORDER = { waiting: 0, running: 1, starting: 1, done: 2, idle: 3, exited: 4 };
   // Bild in der Zwischenablage: der Agent liest sie selbst, sobald er "seine" Taste bekommt
   // (verifiziert 31.08.2026: Claude Code = Alt+V, Codex = rohes Ctrl+V).
-  const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', pi: '\x16' };
+  const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', agy: '\x16', pi: '\x16' };
   // xterm.js reduziert Strg/Shift+Enter beide auf ein normales Enter. Damit der Agent den Modifier
   // erhaelt, senden wir die Sequenz selbst: Claude braucht fuer Shift+Enter weiter ESC CR
-  // (wie VS-Code-/terminal-setup), Codex + Pi verstehen CSI-u. Strg+Enter verstehen alle als CSI-u.
+  // (wie VS-Code-/terminal-setup), Codex + agy + Pi verstehen CSI-u. Strg+Enter verstehen alle als CSI-u.
   const MODIFIED_ENTER_KEY = {
-    shift: { claude: '\x1b\r', codex: '\x1b[13;2u', pi: '\x1b[13;2u' },
-    ctrl: { claude: '\x1b[13;5u', codex: '\x1b[13;5u', pi: '\x1b[13;5u' },
+    shift: { claude: '\x1b\r', codex: '\x1b[13;2u', agy: '\x1b[13;2u', pi: '\x1b[13;2u' },
+    ctrl: { claude: '\x1b[13;5u', codex: '\x1b[13;5u', agy: '\x1b[13;5u', pi: '\x1b[13;5u' },
   };
   // Läuft das Fenster auf dem Daemon-Rechner, reicht die Bild-Taste (gleiche Zwischenablage).
   // Aus der Ferne wird das Bild zum Daemon übertragen, der es dort in die Zwischenablage legt.
@@ -198,7 +198,10 @@
         }
         if (m.t === 'hello') restoreLayout();
         for (const p of panes) if (p.id && !(pluginOf(p.id) ? hasPlugin(pluginOf(p.id)) : sessionOf(p.id))) p.id = null;
-        if (!activeId() && sessions.length && panes.length === 1 && !MOBILE.matches) panes[0].id = sessions[0].id;
+        if (!activeId() && sessions.length && panes.length === 1 && !MOBILE.matches) {
+          const next = sortedSessions()[0] || sessions.find(s => !s.owner) || sessions[0];
+          if (next) panes[0].id = next.id;
+        }
         // Geteilt gestartet (?split=…) und noch leer: die ersten Sessions auf die Panes verteilen
         if (m.t === 'hello' && panes.length > 1 && panes.every(p => !p.id)) {
           sessions.slice(0, panes.length).forEach((s, i) => { panes[i].id = s.id; });
@@ -212,6 +215,7 @@
         renderAll();
         for (const p of panes) if (p.id && !pluginOf(p.id)) ensureAttached(p.id);
         fitAll(); // neu zugewiesene Panes sofort an die echte Größe anpassen
+        focusActiveTerm();
       } else if (m.t === 'plugin') {
         const p = plugins.find(x => x.id === m.id);
         if (p) {
@@ -243,6 +247,13 @@
       } else if (m.t === 'gone') {
         dropTerm(m.id);
         for (const p of panes) if (p.id === m.id) p.id = null;
+        if (!activeId() && sessions.length && panes.length === 1 && !MOBILE.matches) {
+          const next = sortedSessions().find(s => s.id !== m.id) || sessions.find(s => s.id !== m.id && !s.owner) || sessions.find(s => s.id !== m.id);
+          if (next) panes[0].id = next.id;
+        }
+        for (const p of panes) if (p.id && !pluginOf(p.id)) ensureAttached(p.id);
+        fitAll();
+        focusActiveTerm();
         saveLayout();
         renderAll();
       }
@@ -378,7 +389,7 @@
   $('bgfile').addEventListener('change', () => {
     const file = $('bgfile').files[0];
     if (!file) return;
-    if (file.size > 30 * 1024 * 1024) { alert('Bild ist größer als 30 MB.'); return; }
+    if (file.size > 30 * 1024 * 1024) { flashError('Bild ist größer als 30 MB.'); return; }
     const fr = new FileReader();
     fr.onload = () => send({ t: 'background', mime: file.type, data: String(fr.result).split(',')[1] || '' });
     fr.readAsDataURL(file);
@@ -669,7 +680,23 @@
     if (s && s.unread) send({ t: 'markRead', id });
   }
 
-  const focusActiveTerm = () => { const id = activeId(); if (id) requestAnimationFrame(() => terms.get(id)?.term.focus()); };
+  const inInputField = () => {
+    const ae = document.activeElement;
+    return !!(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT') && !ae.classList.contains('xterm-helper-textarea'));
+  };
+  const focusActiveTerm = () => {
+    if (MOBILE.matches || document.querySelector('dialog[open]') || inInputField()) return;
+    if (document.activeElement && document.activeElement.tagName !== 'BODY' && !document.activeElement.classList.contains('xterm-helper-textarea')) {
+      document.activeElement.blur?.();
+    }
+    const id = activeId();
+    if (id && !pluginOf(id)) {
+      requestAnimationFrame(() => {
+        if (document.querySelector('dialog[open]') || inInputField()) return;
+        terms.get(id)?.term.focus();
+      });
+    }
+  };
 
   // Nach jeder Strukturänderung: flache Liste neu, Fokus auf das gewünschte Blatt
   function relayout(focusLeaf) {
@@ -807,7 +834,7 @@
     }
   }
 
-  const AGENT_ORDER = { claude: 0, codex: 1, pi: 2, pwsh: 3 };
+  const AGENT_ORDER = { claude: 0, codex: 1, agy: 2, pi: 3, pwsh: 4 };
   const SORT_LABEL = { ordner: 'Ordner', status: 'Status', typ: 'Typ' };
 
   // Wo arbeitet die Session tatsächlich? Claude und Codex melden ihren Arbeitsordner mit jedem Hook
@@ -983,10 +1010,13 @@
       b.querySelector('.nm').textContent = s.name;
       b.querySelector('.nm').title = s.title ? `Titel im Agenten: ${s.title}` : s.name;
       if (s.konto) b.querySelector('.nm').append(kontoChip(s.konto));
+      const subChip = subagentChip(s.id);
+      if (subChip) b.querySelector('.nm').append(subChip);
       setAgentIcon(b.querySelector('.ag'), s.agent);
       const st = b.querySelector('.st');
-      st.title = `${wtree.dir}\n${s.detail || ''}`;
-      st.textContent = s.detail || '';
+      const fullDetail = sessionDetailText(s);
+      st.title = `${wtree.dir}\n${fullDetail}`;
+      st.textContent = fullDetail;
       // Eigene Zeile für Worktree und dessen Stand - nur in den flachen Listen (Status, Typ). In der
       // Ordneransicht steht beides in der Überschrift, und die Gruppe folgt dem echten Arbeitsort.
       const loc = b.querySelector('.loc');
@@ -1028,7 +1058,7 @@
   // Kleines Agenten-Symbol statt des Namens; der Name bleibt als Tooltip und für Screenreader erhalten.
   // Die Bilder stecken als data:-URIs in style.css (ui/agents/embed.js) - so erscheinen sie auch, wenn
   // der laufende Daemon älter ist als die Oberfläche und eigene Bild-Routen noch nicht kennt.
-  const AGENTS_WITH_ICON = new Set(['claude', 'codex', 'pi', 'pwsh']);
+  const AGENTS_WITH_ICON = new Set(['claude', 'codex', 'agy', 'pi', 'pwsh']);
   function setAgentIcon(el, agent) {
     if (el.dataset.agent === agent) return;
     el.dataset.agent = agent;
@@ -1089,7 +1119,7 @@
         <span class="lim s-only" title="Ein anderer Client zeigt diese Session gerade kleiner an – die kleinste Ansicht bestimmt die Terminalgröße"></span>
         <span class="sp"></span>
         <button class="btn b-restore s-only" hidden>Wiederherstellen</button>
-        <button class="btn b-rename s-only" title="Umbenennen (F2) – der Name wird auch im Agenten gesetzt (Claude Code, Codex)">Umbenennen</button>
+        <button class="btn b-rename s-only" title="Umbenennen (F2) – der Name wird auch im Agenten gesetzt (Claude Code, Codex, agy)">Umbenennen</button>
         <button class="btn danger b-close s-only" hidden>Schließen</button>
         <button class="btn danger b-dispose s-only" hidden>Entfernen</button>
         <span class="pbtns">
@@ -1116,11 +1146,11 @@
     el.querySelector('.nm').addEventListener('dblclick', () => renamePrompt(idOf()));
     el.querySelector('.b-close').addEventListener('click', () => {
       const s = sessionOf(idOf());
-      if (s && confirm(`„${s.name}" läuft noch – Prozess wirklich beenden?`)) send({ t: 'close', id: s.id });
+      if (s) askConfirm(`„${s.name}" läuft noch – Prozess wirklich beenden?`, 'Beenden').then(ok => { if (ok) send({ t: 'close', id: s.id }); });
     });
     el.querySelector('.b-dispose').addEventListener('click', () => {
       const s = sessionOf(idOf());
-      if (s && confirm(`„${s.name}" samt Scrollback aus der Liste entfernen?`)) send({ t: 'dispose', id: s.id });
+      if (s) askConfirm(`„${s.name}" samt Scrollback aus der Liste entfernen?`, 'Entfernen').then(ok => { if (ok) send({ t: 'dispose', id: s.id }); });
     });
     el.querySelector('.b-restore').addEventListener('click', () => {
       const id = idOf();
@@ -1324,6 +1354,7 @@
       openSession: sid => { if (sessionOf(sid)) assignToPane(focused, sid); },
       openExternal,
       error: flashError,
+      confirm: askConfirm,
     };
   }
 
@@ -1354,12 +1385,34 @@
       const def = pluginDefs.get(p.id);
       let tab = { title: p.name };
       try { if (def?.tab) tab = { ...tab, ...def.tab(p.state, pluginApi(p.id)) }; } catch (err) { console.error(`Plugin ${p.id}:`, err); }
+      const owned = sessions.filter(x => x.owner === p.id);
+      const colKey = PLUGIN_PREFIX + p.id;
+      const isCol = isCollapsed(colKey);
       const b = mk('button', 'sess plug-tab');
       b.setAttribute('aria-current', panes.some(x => x.id === PLUGIN_PREFIX + p.id) ? 'true' : 'false');
-      b.append(mk('span', 'ic', p.icon), mk('span', 'nm', tab.title || p.name), mk('span', 'plug-badge' + (tab.hot ? ' hot' : ''), tab.badge || ''), mk('span', 'st', tab.subline || ''));
+      b.append(mk('span', 'ic', p.icon), mk('span', 'nm', tab.title || p.name), mk('span', 'plug-badge' + (tab.hot ? ' hot' : ''), tab.badge || ''));
+      if (owned.length) {
+        const waiting = isCol && owned.some(x => x.status === 'waiting');
+        const fold = mk('span', 'plug-fold' + (waiting ? ' waiting' : ''));
+        fold.title = isCol ? `System-Session (${owned.map(x => x.name).join(', ')}) ausklappen` : 'System-Session einklappen';
+        fold.setAttribute('role', 'button');
+        fold.setAttribute('aria-expanded', isCol ? 'false' : 'true');
+        fold.innerHTML = isCol
+          ? '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 2.5L6 6l3.5-3.5M2.5 6.5L6 10l3.5-3.5"/></svg>'
+          : '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5L6 6l3.5 3.5M2.5 5.5L6 2l3.5 3.5"/></svg>';
+        fold.addEventListener('click', e => {
+          e.stopPropagation();
+          toggleCollapsed(colKey);
+          persistLocal();
+          renderAll();
+        });
+        b.appendChild(fold);
+      }
+      b.appendChild(mk('span', 'st', tab.subline || ''));
       b.addEventListener('click', () => { if (Date.now() >= suppressClick) assignToPane(focused, PLUGIN_PREFIX + p.id); });
       list.appendChild(b);
-      for (const s of sessions.filter(x => x.owner === p.id)) {
+      if (isCol) continue;
+      for (const s of owned) {
         const r = mk('button', `sess owned ${s.status}${s.unread ? ' unread' : ''}`);
         r.dataset.id = s.id;
         r.setAttribute('aria-current', panes.some(x => x.id === s.id) ? 'true' : 'false');
@@ -1410,6 +1463,27 @@
     c.title = 'Claude-Konto: ' + k.label;
     return c;
   }
+  // Subagenten-Informationen aus dem Büro-Plugin für die linke Seitenleiste mitnutzen
+  function sessionSubagents(sid) {
+    const bp = plugins.find(p => p.id === 'buero');
+    return bp?.state?.subagents?.[sid] || [];
+  }
+  function subagentChip(sid) {
+    const subs = sessionSubagents(sid);
+    const active = subs.filter(x => x.status === 'running');
+    if (!active.length) return null;
+    const c = mk('span', 'konto sub-chip', `+${active.length} Sub`);
+    c.title = 'Aktive Subagenten:\n' + active.map(x => `• ${x.name} (${x.detail || x.role})`).join('\n');
+    return c;
+  }
+  function sessionDetailText(s) {
+    const base = s.detail || '';
+    const activeSubs = sessionSubagents(s.id).filter(x => x.status === 'running');
+    if (activeSubs.length && (!base || base === 'arbeitet')) {
+      return `👥 ${activeSubs.map(x => `${x.name}${x.detail && x.detail !== 'arbeitet im Cubicle' ? ' (' + x.detail + ')' : ''}`).join(' · ')}`;
+    }
+    return base;
+  }
   // keep: aktuelle Auswahl behalten (Liste neu eingelesen); sonst das gemerkte Konto des Ordners
   function renderKonten(keep = false) {
     const sel = $('f-konto');
@@ -1448,6 +1522,29 @@
     send({ t: 'create', agent: dlgAgent, cwd, name: $('f-name').value.trim(), args: $('f-args').value.trim(), konto, cols: lastSize.cols, rows: lastSize.rows });
   });
   $('f-cancel').addEventListener('click', () => $('newdlg').close());
+  $('newdlg').addEventListener('close', focusActiveTerm);
+  let confirmResolve = null;
+  function askConfirm(text, okLabel = 'OK') {
+    if (confirmResolve) { confirmResolve(false); confirmResolve = null; }
+    const dlg = $('confirmdlg');
+    $('confirmtext').textContent = text;
+    $('c-ok').textContent = okLabel;
+    return new Promise(resolve => {
+      confirmResolve = resolve;
+      dlg.showModal();
+      $('c-ok').focus();
+    });
+  }
+  $('confirmform').addEventListener('submit', () => {
+    const r = confirmResolve; confirmResolve = null;
+    if (r) r(true);
+  });
+  $('c-cancel').addEventListener('click', () => $('confirmdlg').close());
+  $('confirmdlg').addEventListener('close', () => {
+    const r = confirmResolve; confirmResolve = null;
+    if (r) r(false);
+    focusActiveTerm();
+  });
   $('newbtn').addEventListener('click', openNew);
   $('restoreall').addEventListener('click', () => send({ t: 'restoreAll', cols: lastSize.cols, rows: lastSize.rows }));
 
@@ -1480,13 +1577,20 @@
   document.addEventListener('click', () => {
     if (MOBILE.matches || document.querySelector('dialog[open]')) return;
     const ae = document.activeElement;
-    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !ae.classList.contains('xterm-helper-textarea')) return;
+    if (inInputField()) return;
+    if (ae && ae.tagName !== 'BODY' && !ae.classList.contains('xterm-helper-textarea')) ae.blur?.();
     const id = activeId();
     if (id) terms.get(id)?.term.focus();
   });
+  window.addEventListener('focus', focusActiveTerm);
   window.addEventListener('keydown', e => {
     const ae = document.activeElement;
-    const inField = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') && !ae.classList.contains('xterm-helper-textarea');
+    const inField = inInputField();
+    if (!inField && !document.querySelector('dialog[open]') && ae?.tagName === 'BUTTON') {
+      ae.blur();
+      const id = activeId();
+      if (id && !pluginOf(id)) terms.get(id)?.term.focus();
+    }
     if (!inField && (e.key === 'F2' || (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'r'))) {
       e.preventDefault();
       if (activeId()) renamePrompt(activeId());

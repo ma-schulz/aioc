@@ -91,6 +91,7 @@
       <div class="seg" id="agentseg">
         <button type="button" data-a="claude" class="on"><span class="agi agi-claude" aria-hidden="true"></span>Claude</button>
         <button type="button" data-a="codex"><span class="agi agi-codex" aria-hidden="true"></span>Codex</button>
+        <button type="button" data-a="agy"><span class="agi agi-agy" aria-hidden="true"></span>agy</button>
         <button type="button" data-a="pi"><span class="agi agi-pi" aria-hidden="true"></span>Pi</button>
         <button type="button" data-a="pwsh"><span class="agi agi-pwsh" aria-hidden="true"></span>pwsh</button>
       </div>
@@ -107,6 +108,16 @@
     <div class="foot">
       <button type="button" class="btn" id="f-cancel">Abbrechen</button>
       <button type="submit" class="btn primary" id="f-start">Starten</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="confirmdlg">
+  <form method="dialog" id="confirmform">
+    <div class="body" id="confirmtext"></div>
+    <div class="foot">
+      <button type="button" class="btn" id="c-cancel">Abbrechen</button>
+      <button type="submit" class="btn danger" id="c-ok">OK</button>
     </div>
   </form>
 </dialog>

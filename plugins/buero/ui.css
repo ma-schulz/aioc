@@ -1,0 +1,145 @@
+.buero-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #14161d;
+  color: #e2e8f0;
+  font-family: ui-monospace, 'Cascadia Code', 'Consolas', monospace;
+  user-select: none;
+  overflow: hidden;
+}
+
+.buero-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: #1b1e28;
+  border-bottom: 1px solid #2b3040;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+
+.buero-toolbar .title {
+  font-weight: 700;
+  color: #f8fafc;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.buero-stats {
+  display: flex;
+  gap: 10px;
+  color: #94a3b8;
+}
+
+.buero-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: #232734;
+  font-size: 11px;
+}
+
+.buero-stat .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.buero-toolbar .spacer {
+  flex: 1;
+}
+
+.buero-btn {
+  background: #262b3a;
+  color: #cbd5e1;
+  border: 1px solid #363d52;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.buero-btn:hover {
+  background: #32384c;
+  color: #fff;
+}
+
+.buero-btn.active {
+  background: #3b4259;
+  border-color: #64748b;
+  color: #fff;
+}
+
+.buero-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.buero-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  cursor: default;
+}
+
+.buero-tooltip {
+  position: absolute;
+  pointer-events: none;
+  background: rgba(15, 18, 26, 0.95);
+  border: 1px solid #475569;
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #f1f5f9;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  max-width: 290px;
+  z-index: 20;
+  transform: translate(12px, 12px);
+}
+
+.buero-tooltip[hidden] {
+  display: none !important;
+}
+
+.buero-tooltip .tt-head {
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.buero-tooltip .tt-role {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.buero-tooltip .tt-status {
+  margin-top: 3px;
+  color: #cbd5e1;
+  word-break: break-word;
+}
+
+.buero-tooltip .tt-hint {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 10px;
+}

@@ -357,6 +357,14 @@ function shutdown() {
   try { mgr.saveAllNow(); } catch {}
   process.exit(0);
 }
+function logDaemonError(kind, err) {
+  const msg = err?.stack || err?.message || String(err);
+  const line = `[${new Date().toISOString()}] ${kind}: ${msg}\n`;
+  try { fs.appendFileSync(path.join(state.DIR, 'daemon.log'), line); } catch {}
+  console.error(`[aioc] ${kind}:`, msg);
+}
+process.on('uncaughtException', err => logDaemonError('uncaughtException', err));
+process.on('unhandledRejection', err => logDaemonError('unhandledRejection', err));
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 process.on('SIGHUP', shutdown);

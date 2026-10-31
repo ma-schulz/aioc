@@ -1,0 +1,8 @@
+{
+  "id": "buero",
+  "name": "Pixel-Büro",
+  "icon": "🏢",
+  "daemon": "daemon.js",
+  "ui": "ui.js",
+  "css": "ui.css"
+}

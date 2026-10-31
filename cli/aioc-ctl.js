@@ -12,7 +12,7 @@ const HELP = `aioc-ctl – Aioc-Sessions lesen, anschreiben und auf sie warten
 
   aioc-ctl list                               alle Sessions mit Status
   aioc-ctl read <session> [--lines N|--all]   Terminalinhalt als Text (Standard: letzte 60 Zeilen)
-  aioc-ctl read <session> --answer            letzte Antwort des Agenten (Claude/Codex, aus dem Stop-Hook)
+  aioc-ctl read <session> --answer            letzte Antwort des Agenten (Claude/Codex/agy)
   aioc-ctl prompt <session> <text…>           Text eingeben und absenden ("-" = Text von stdin)
       --no-enter                              nur eingeben, nicht absenden
       --wait [--timeout S]                    danach warten, bis der Agent fertig ist oder fragt,
@@ -165,7 +165,7 @@ async function cmdRead(target, opt) {
   const r = await api('GET', '/api/read?' + qs);
   if (opt.json) return out(JSON.stringify(r, null, 2));
   if (opt.answer) {
-    if (r.answer == null) fail('keine Antwort gespeichert – die gibt es erst nach einem abgeschlossenen Turn (Claude, Codex)');
+    if (r.answer == null) fail('keine Antwort gespeichert – die gibt es erst nach einem abgeschlossenen Turn (Claude, Codex, agy)');
     return out(r.answer);
   }
   return out(r.text);

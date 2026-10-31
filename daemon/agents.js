@@ -1,5 +1,5 @@
-// Aioc agent launch configs: how claude / codex / pi / pwsh are spawned, with per-invocation
-// status hooks injected. Nothing here touches global agent configs (~/.claude, ~/.codex, ~/.pi).
+// Aioc agent launch configs: how claude / codex / agy / pi / pwsh are spawned, with per-invocation
+// status hooks injected. Nothing here touches global agent configs (~/.claude, ~/.codex, ~/.pi, ~/.gemini).
 const fs = require('fs');
 const path = require('path');
 const state = require('./state');
@@ -9,14 +9,15 @@ const PI_EXT = path.join(__dirname, 'hooks', 'aioc-pi-ext.ts');
 const BIN = path.join(__dirname, '..', 'bin');
 const fwd = p => p.replace(/\\/g, '/');
 
-const AGENTS = ['claude', 'codex', 'pi', 'pwsh'];
+const AGENTS = ['claude', 'codex', 'agy', 'pi', 'pwsh'];
 
-// Environment for spawned sessions: inherit, but strip CLAUDE* markers (a claude session that
-// spawned the daemon must not make child claudes think they are nested) and add Aioc markers.
+// Environment for spawned sessions: inherit, but strip CLAUDE* and ANTIGRAVITY_* session markers
+// (a parent session that spawned the daemon must not leak its conversation/CLI state into child sessions)
+// and add Aioc markers.
 function buildEnv(port, sessionId, agent) {
   const env = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (/^CLAUDE/i.test(k)) continue;
+    if (/^(CLAUDE|ANTIGRAVITY_|AGY_)/i.test(k)) continue;
     env[k] = v;
   }
   env.AIOC_PORT = String(port);
@@ -36,7 +37,7 @@ function writeClaudeSettings() {
     hooks: {
       SessionStart: plain(),
       UserPromptSubmit: plain(),
-      PreToolUse: [{ matcher: 'AskUserQuestion', hooks: [H] }],
+      PreToolUse: plain(),
       PostToolUse: [{ matcher: 'AskUserQuestion', hooks: [H] }],
       PermissionRequest: plain(),
       Notification: plain(),
@@ -67,12 +68,14 @@ function splitArgs(str) {
   return out;
 }
 
-// Standard fuer alle Sessions (User-Vorgabe 04.10.2026): Claude mit Remote Control, Codex im
-// Yolo-Modus. Bringen die Session-Args selbst etwas dazu mit, gewinnen diese - Codex bricht bei
-// doppeltem --yolo oder --yolo + --full-auto mit Exit 2 ab.
+// Standard fuer alle Sessions (User-Vorgabe 04.10.2026 / 26.10.2026): Claude mit Remote Control,
+// Codex im Yolo-Modus, Antigravity (agy) mit Yolo + Remote Control. Bringen die Session-Args selbst
+// etwas dazu mit, gewinnen diese - Codex bricht bei doppeltem --yolo oder --yolo + --full-auto mit Exit 2 ab.
 const hasArg = (extra, re) => extra.some(a => re.test(a));
 const CLAUDE_RC = /^--remote-control(=|$)/;
 const CODEX_POLICY = /^(--yolo|--dangerously-bypass-approvals-and-sandbox|--full-auto|--approve-for-me|-a|--ask-for-approval|-s|--sandbox)(=|$)/;
+const AGY_POLICY = /^(--dangerously-skip-permissions|--mode|--sandbox)(=|$)/;
+const AGY_RESUME = /^(-c|--continue|--conversation)(=|$)/;
 
 // Build the spawn spec for a session. entry: {agent, cwd, args, agentSessionId}; resume: reuse
 // the agent's own conversation persistence after daemon/PC restart.
@@ -81,6 +84,8 @@ function buildSpawn(entry, port, { resume = false } = {}) {
   // Eigene Variablen der Session kommen nach dem Filter - so kann z. B. CLAUDE_CONFIG_DIR eine
   // Session mit einem anderen Claude-Konto starten
   const env = { ...buildEnv(port, entry.id, entry.agent), ...(entry.env || {}) };
+  // Antigravity CLI (agy >= 1.4): Status- und Titelmeldungen per OSC 7501 aktivieren
+  if (entry.agent === 'agy' && !env.AGY_CLI_OSC7501) env.AGY_CLI_OSC7501 = 'on';
   switch (entry.agent) {
     case 'claude': {
       const settings = writeClaudeSettings();
@@ -99,6 +104,15 @@ function buildSpawn(entry, port, { resume = false } = {}) {
       // Die Aioc-Hooks sind unsere eigenen -c-Injektionen, daher Trust hier bewusst umgehen.
       args.push('--dangerously-bypass-hook-trust');
       return { file: 'cmd.exe', args: [...args, ...codexHookArgs(), ...extra], env };
+    }
+    case 'agy': {
+      const args = ['/c', 'agy'];
+      if (!hasArg(extra, CLAUDE_RC)) args.push('--remote-control');
+      if (!hasArg(extra, AGY_POLICY)) args.push('--dangerously-skip-permissions');
+      if (resume && !hasArg(extra, AGY_RESUME)) {
+        args.push(...(entry.agentSessionId ? ['--conversation', entry.agentSessionId] : ['--continue']));
+      }
+      return { file: 'cmd.exe', args: [...args, ...extra], env };
     }
     case 'pi': {
       const args = ['/c', 'pi', '-e', PI_EXT];

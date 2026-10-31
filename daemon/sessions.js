@@ -12,9 +12,11 @@ const agents = require('./agents');
 const claudeMeta = require('./claude-meta');
 const claudeAccounts = require('./claude-accounts');
 
+const os = require('os');
 const OSC_TITLE = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+const OSC_7501 = /\x1b\]7501;([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
 // Taste, mit der der Agent ein Bild aus der System-Zwischenablage holt (verifiziert 31.08.2026)
-const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', pi: '\x16' };
+const IMAGE_KEY = { claude: '\x1bv', codex: '\x16', agy: '\x16', pi: '\x16' };
 const CLIP_SCRIPT = path.join(__dirname, 'set-clipboard-image.ps1');
 // Tasten fuer die Steuer-API (aioc-ctl key)
 const KEYS = {
@@ -22,8 +24,8 @@ const KEYS = {
   up: '\x1b[A', down: '\x1b[B', right: '\x1b[C', left: '\x1b[D',
   home: '\x1b[H', end: '\x1b[F', pgup: '\x1b[5~', pgdn: '\x1b[6~', delete: '\x1b[3~',
 };
-// Umbenennen zurueck in den Agenten schreiben: Claude Code und Codex koennen das per Slash-Befehl
-const RENAME_COMMAND = { claude: '/rename', codex: '/rename' };
+// Umbenennen zurueck in den Agenten schreiben: Claude Code, Codex und Antigravity (agy) koennen das per Slash-Befehl
+const RENAME_COMMAND = { claude: '/rename', codex: '/rename', agy: '/rename' };
 const apiError = (status, message) => Object.assign(new Error(message), { status });
 // Ein Checkpoint (Puffer serialisieren) kostet gemessen ~80 ms und blockiert dabei den Hauptthread,
 // also alles andere - auch die Tastatureingaben. Deshalb nur selten: wenn seit dem letzten Checkpoint
@@ -60,10 +62,61 @@ function bufferText(term, lines) {
 // Spinner- und Statuszeichen am Anfang des Terminaltitels (Claude: "✳ Name", "◐ Name"; Codex: "[ ! ] …")
 const TITLE_PREFIX = /^(?:[\s*·•…⏺✳✻✽◐◑◒◓◜◝◞◟⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]|\[\s*!\s*\])+/u;
 // Titel, die keinen Sessionnamen tragen, sondern nur das Programm oder einen Hinweis nennen
-const TITLE_GENERIC = [/^claude( code)?$/i, /^codex$/i, /^pi$/i, /^action required$/i, /^pwsh(\.exe)?$/i, /^powershell$/i];
+const TITLE_GENERIC = [/^claude( code)?$/i, /^codex$/i, /^agy(\.exe)?$/i, /^antigravity$/i, /^pi$/i, /^action required$/i, /^pwsh(\.exe)?$/i, /^powershell$/i];
 
 const folderOf = cwd => String(cwd || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
 const defaultName = entry => `${entry.agent} · ${folderOf(entry.cwd)}`;
+
+// Antigravity CLI merkt sich die letzte Conversation-ID je Arbeitsordner in last_conversations.json
+const AGY_LAST_CONV_FILE = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'cache', 'last_conversations.json');
+function lookupAgyConversationId(cwd) {
+  if (!cwd) return null;
+  try {
+    const map = JSON.parse(fs.readFileSync(AGY_LAST_CONV_FILE, 'utf8'));
+    const norm = p => String(p || '').replace(/[\\/]+$/, '').toLowerCase();
+    const target = norm(cwd);
+    for (const [k, v] of Object.entries(map)) {
+      if (norm(k) === target && typeof v === 'string' && v) return v;
+    }
+  } catch {}
+  return null;
+}
+
+// Liest den letzten Tool-Aufruf einer laufenden Antigravity-Session aus deren transcript.jsonl
+function readAgyLatestStep(cid) {
+  if (!cid) return null;
+  const tf = path.join(os.homedir(), '.gemini', 'antigravity-cli', 'brain', cid, '.system_generated', 'logs', 'transcript.jsonl');
+  try {
+    const st = fs.statSync(tf);
+    if (!st.size) return null;
+    const len = Math.min(st.size, 24576);
+    const buf = Buffer.alloc(len);
+    const fd = fs.openSync(tf, 'r');
+    try { fs.readSync(fd, buf, 0, len, st.size - len); } finally { fs.closeSync(fd); }
+    const lines = buf.toString('utf8').trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      let o;
+      try { o = JSON.parse(lines[i]); } catch { continue; }
+      if (Array.isArray(o.tool_calls) && o.tool_calls.length) {
+        const tc = o.tool_calls[o.tool_calls.length - 1];
+        const rawName = String(tc.name || '').replace(/^default_api:/, '');
+        const args = {};
+        for (const [k, v] of Object.entries(tc.args || tc.arguments || {})) {
+          args[k] = typeof v === 'string' ? v.replace(/^"|"$/g, '').replace(/\\\\/g, '\\') : v;
+        }
+        const base = p => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+        if (rawName === 'run_command') return `⚡ ${args.toolSummary || args.CommandLine || 'Befehl'}`.slice(0, 95);
+        if (rawName === 'read_file') return `📖 Liest ${base(args.Path) || 'Datei'}`;
+        if (rawName === 'edit_file') return `✏️ Bearbeitet ${base(args.Path) || 'Datei'}`;
+        if (rawName === 'write_file') return `📝 Schreibt ${base(args.Path) || 'Datei'}`;
+        if (rawName === 'invoke_subagent') return `👥 Subagent: ${args.Role || args.TypeName || 'startet'}`.slice(0, 95);
+        if (rawName === 'search_web') return `🌐 Sucht „${args.query || ''}"`.slice(0, 80);
+        return `🔧 ${rawName}`;
+      }
+    }
+  } catch {}
+  return null;
+}
 
 // Namensvorschlag aus dem Terminaltitel: Claude schreibt dort seinen Sessionnamen - nach /rename den
 // von dir gesetzten, sonst seinen selbst erzeugten Titel. Codex schreibt nur den Ordner, pwsh einen
@@ -78,6 +131,81 @@ function nameFromTitle(entry) {
   if (/[\\/]|^[A-Za-z]:/.test(raw)) return null;
   if (raw.toLowerCase() === folderOf(entry.cwd).toLowerCase()) return null;
   return raw;
+}
+
+// Lesbare Kurzbeschreibung eines Tool-Aufrufs fuer die linke Seitenleiste (statt pauschal "arbeitet")
+function formatToolDetail(toolName, input = {}) {
+  const base = p => String(p || '').replace(/[\\/]+$/, '').split(/[\\/]/).pop() || '';
+  switch (toolName) {
+    case 'TodoWrite': {
+      const todos = Array.isArray(input.todos) ? input.todos : [];
+      const active = todos.find(t => t.status === 'in_progress') || todos.find(t => t.status === 'pending');
+      const done = todos.filter(t => t.status === 'completed').length;
+      if (active) {
+        const txt = String(active.activeForm || active.content || '').trim();
+        return `☑ ${done}/${todos.length} · ${txt}`.slice(0, 110);
+      }
+      return null;
+    }
+    case 'TaskCreate':
+    case 'TaskUpdate': {
+      const subj = String(input.subject || input.description || '').trim();
+      return subj ? `☑ ${subj.slice(0, 95)}` : null;
+    }
+    case 'Agent':
+    case 'Task': {
+      const desc = String(input.description || input.subagent_type || 'Subagent').trim();
+      return `👥 Subagent: ${desc.slice(0, 90)}`;
+    }
+    case 'Bash':
+    case 'PowerShell': {
+      const desc = String(input.description || '').trim();
+      if (desc) return `⚡ ${desc.slice(0, 95)}`;
+      const cmd = String(input.command || '').trim().split('\n')[0].replace(/\s+/g, ' ');
+      return cmd ? `$ ${cmd.slice(0, 85)}` : '⚡ führt Befehl aus';
+    }
+    case 'Read': {
+      const f = base(input.file_path || input.path);
+      return f ? `📖 Liest ${f}` : '📖 Liest Datei';
+    }
+    case 'Edit':
+    case 'MultiEdit': {
+      const f = base(input.file_path || input.path);
+      return f ? `✏️ Bearbeitet ${f}` : '✏️ Bearbeitet Datei';
+    }
+    case 'Write': {
+      const f = base(input.file_path || input.path);
+      return f ? `📝 Schreibt ${f}` : '📝 Schreibt Datei';
+    }
+    case 'Grep': {
+      const pat = String(input.pattern || '').trim();
+      return pat ? `🔍 Sucht „${pat.slice(0, 50)}"` : '🔍 Durchsucht Code';
+    }
+    case 'Glob': {
+      const pat = String(input.pattern || '').trim();
+      return pat ? `🗂️ Dateien ${pat.slice(0, 50)}` : '🗂️ Sucht Dateien';
+    }
+    case 'WebSearch': {
+      const q = String(input.query || '').trim();
+      return q ? `🌐 Sucht „${q.slice(0, 55)}"` : '🌐 Websuche';
+    }
+    case 'WebFetch':
+      return '🌐 Lädt Webseite';
+    case 'ListAgents':
+      return '👥 Prüft Subagenten';
+    case 'SendMessage':
+      return '💬 Nachricht an Agenten';
+    default: {
+      const m = String(toolName || '').match(/^mcp__([^_]+(?:_[^_]+)?)__(.+)$/);
+      if (m) {
+        const srv = m[1].replace(/^claude_ai_/, '');
+        const act = m[2].replace(/_/g, ' ');
+        const hint = input.id || input.pullRequestId || input.workItemId || input.query || '';
+        return `🔌 ${srv}: ${act}${hint ? ' #' + String(hint).slice(0, 25) : ''}`.slice(0, 100);
+      }
+      return toolName ? `🔧 ${toolName}` : null;
+    }
+  }
 }
 
 class Session {
@@ -137,6 +265,15 @@ class Session {
       this.setStatus('exited', 'Start fehlgeschlagen: ' + err.message, 'system');
       return;
     }
+    // Pipe-/Worker-Fehler in node-pty (ECONNRESET/EPIPE/EOF beim Beenden) und verspaetete Resizes
+    // abfangen, sonst wirft WindowsTerminal._socket.on('error') eine uncaughtException im Daemon.
+    this.proc.on('error', () => {});
+    this.proc._agent?._inSocket?.on?.('error', () => {});
+    this.proc._agent?._conoutSocketWorker?._worker?.on?.('error', () => {});
+    if (this.proc._agent && typeof this.proc._agent.resize === 'function') {
+      const origResize = this.proc._agent.resize.bind(this.proc._agent);
+      this.proc._agent.resize = (c, r) => { try { origResize(c, r); } catch {} };
+    }
     this.entry.exitedAt = null;
     this.spawnedAt = Date.now();
     this.setStatus('starting', 'startet…', 'system');
@@ -151,11 +288,12 @@ class Session {
     this.parseTitles(d);
     this.journalBytes += state.appendScrollback(this.entry.id, d); // anhaengen statt serialisieren
     this.scheduleSave();
-    if (this.entry.agent === 'pwsh') this.heuristic();
+    if (this.entry.agent === 'pwsh' || (this.entry.agent === 'agy' && this.entry.statusSource !== 'osc7501')) this.heuristic();
   }
 
   parseTitles(chunk) {
     this.titleBuf = (this.titleBuf + chunk).slice(-4096);
+    this.parseOsc7501();
     let m, last = null;
     OSC_TITLE.lastIndex = 0;
     while ((m = OSC_TITLE.exec(this.titleBuf))) last = m[1];
@@ -169,6 +307,72 @@ class Session {
       else this.mgr.persistAndBroadcast();
     } else {
       this.mgr.persistAndBroadcast();
+    }
+  }
+
+  // OSC 7501 (Program Status Protocol, von agy >= 1.4 bei AGY_CLI_OSC7501=on gesendet):
+  // Format: state=<idle|working|blocked|done|error|clear>[:kind=<permission|question|...>][:app=...][:msg=<base64>]
+  parseOsc7501() {
+    let m, last = null;
+    OSC_7501.lastIndex = 0;
+    while ((m = OSC_7501.exec(this.titleBuf))) last = m[1];
+    if (!last || last === this.lastOsc7501) return;
+    this.lastOsc7501 = last;
+    const fields = {};
+    for (const part of last.split(':')) {
+      const eq = part.indexOf('=');
+      if (eq > 0) fields[part.slice(0, eq)] = part.slice(eq + 1);
+    }
+    let msg = '';
+    if (fields.msg) {
+      try { msg = Buffer.from(fields.msg, 'base64').toString('utf8').trim(); } catch {}
+    }
+    if (this.entry.agent === 'agy' && !this.entry.agentSessionId && fields.state && fields.state !== 'idle') {
+      const cid = lookupAgyConversationId(this.entry.cwd);
+      if (cid) this.entry.agentSessionId = cid;
+    }
+    switch (fields.state) {
+      case 'idle':
+        if (this.entry.status === 'starting') this.setStatus('idle', 'bereit', 'osc7501');
+        break;
+      case 'working': {
+        this.entry.unread = false;
+        if (msg && this.entry.title !== msg) {
+          this.entry.title = msg;
+          this.syncName();
+        }
+        const step = readAgyLatestStep(this.entry.agentSessionId);
+        this.setStatus('running', step || (msg ? `💭 ${msg.split('\n')[0].slice(0, 80)}` : 'arbeitet'), 'osc7501');
+        this.startAgyPoll();
+        break;
+      }
+      case 'blocked': {
+        this.stopAgyPoll();
+        const prefix = fields.kind === 'question' ? 'Rückfrage' : fields.kind === 'permission' ? 'Freigabe' : 'wartet auf dich';
+        const detail = msg ? `${prefix}: ${msg.split('\n')[0].slice(0, 100)}` : (fields.kind ? `${prefix} angefragt` : prefix);
+        this.setStatus('waiting', detail, 'osc7501');
+        break;
+      }
+      case 'done': {
+        this.stopAgyPoll();
+        let detail = 'fertig';
+        if (msg) {
+          detail = 'fertig: ' + msg.split('\n')[0].slice(0, 100);
+          this.lastAnswer = msg.slice(0, 200000);
+        }
+        this.entry.unread = true;
+        this.setStatus('done', detail, 'osc7501');
+        break;
+      }
+      case 'error': {
+        this.stopAgyPoll();
+        const detail = msg ? 'Fehler: ' + msg.split('\n')[0].slice(0, 100) : 'Fehler';
+        this.entry.unread = true;
+        this.setStatus('done', detail, 'osc7501');
+        break;
+      }
+      default:
+        break;
     }
   }
 
@@ -220,9 +424,28 @@ class Session {
     }, 3000);
   }
 
+  startAgyPoll() {
+    if (this.agyPollTimer) return;
+    this.agyPollTimer = setInterval(() => {
+      if (!this.proc || this.entry.status !== 'running') { this.stopAgyPoll(); return; }
+      if (!this.entry.agentSessionId) this.entry.agentSessionId = lookupAgyConversationId(this.entry.cwd);
+      const step = readAgyLatestStep(this.entry.agentSessionId);
+      if (step && step !== this.entry.detail) {
+        this.entry.detail = step;
+        this.mgr.persistAndBroadcast();
+      }
+    }, 2000);
+    this.agyPollTimer.unref?.();
+  }
+
+  stopAgyPoll() {
+    if (this.agyPollTimer) { clearInterval(this.agyPollTimer); this.agyPollTimer = null; }
+  }
+
   onExit(e) {
     this.proc = null;
     this.pendingNameWrite = null;
+    this.stopAgyPoll();
     clearTimeout(this.nameWriteTimer);
     clearTimeout(this.heurTimer);
     this.entry.exitedAt = Date.now();
@@ -248,24 +471,38 @@ class Session {
         if (this.entry.status === 'starting') this.setStatus('idle', 'bereit', 'hook');
         else this.mgr.persistAndBroadcast();
         break;
-      case 'UserPromptSubmit':
+      case 'UserPromptSubmit': {
         this.entry.unread = false;
         this.lastAnswer = null;
-        this.setStatus('running', 'arbeitet', 'hook');
+        delete this.entry.todo;
+        const pText = typeof payload.prompt === 'string' ? payload.prompt.trim().split('\n')[0].slice(0, 80) : '';
+        this.setStatus('running', pText ? `💭 ${pText}` : 'arbeitet', 'hook');
         break;
-      case 'PreToolUse':
-        if (payload.tool_name === 'AskUserQuestion') {
-          const qs = payload.tool_input?.questions || [];
+      }
+      case 'PreToolUse': {
+        const tool = payload.tool_name || '';
+        const input = payload.tool_input || {};
+        if (tool === 'AskUserQuestion') {
+          const qs = input.questions || [];
           const q = qs[0]?.question;
           const prefix = qs.length > 1 ? `Rückfragen (${qs.length})` : 'Rückfrage';
           this.setStatus('waiting', q ? `${prefix}: ${q}` : prefix, 'hook');
+          break;
         }
+        const step = formatToolDetail(tool, input);
+        if (tool === 'TodoWrite' || tool === 'TaskCreate' || tool === 'TaskUpdate') {
+          if (step) this.entry.todo = step;
+          else if (tool === 'TodoWrite') delete this.entry.todo;
+        }
+        const detail = [this.entry.todo, step && step !== this.entry.todo ? step : ''].filter(Boolean).join(' · ') || 'arbeitet';
+        this.setStatus('running', detail, 'hook');
         break;
+      }
       case 'Elicitation':
         this.setStatus('waiting', 'Eingabe angefragt (MCP)', 'hook');
         break;
       case 'PostToolUse':
-        if (payload.tool_name === 'AskUserQuestion') this.setStatus('running', 'arbeitet', 'hook');
+        if (payload.tool_name === 'AskUserQuestion') this.setStatus('running', this.entry.todo || 'arbeitet', 'hook');
         break;
       case 'PermissionRequest': {
         const tool = payload.tool_name || '';
@@ -292,6 +529,7 @@ class Session {
         break;
       }
       case 'Stop': {
+        delete this.entry.todo;
         let detail = 'fertig';
         const last = payload.last_assistant_message;
         if (typeof last === 'string' && last.trim()) {

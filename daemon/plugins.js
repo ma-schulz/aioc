@@ -48,11 +48,13 @@ class PluginHost {
       if (!p.startsWith(dir + path.sep)) throw new Error(`${f} liegt außerhalb des Plugin-Ordners`);
       return p;
     };
+    const sharedOwners = Array.isArray(meta.sharedOwners) ? meta.sharedOwners.filter(x => typeof x === 'string') : [];
     const p = {
       id: meta.id,
       name: String(meta.name || meta.id).slice(0, 40),
       icon: String(meta.icon || '◆').slice(0, 4),
       dir,
+      sharedOwners,
       files: { ui: meta.ui ? inside(meta.ui) : null, css: meta.css ? inside(meta.css) : null },
       state: null,
       impl: {},
@@ -69,9 +71,10 @@ class PluginHost {
     const mgr = this.mgr;
     const dataDir = path.join(state.DIR, p.id);
     fs.mkdirSync(dataDir, { recursive: true });
+    const allowedOwners = new Set([p.id, ...(p.sharedOwners || [])]);
     const own = id => {
       const s = mgr.sessions.get(id);
-      if (!s || s.entry.owner !== p.id) throw new Error('Session gehört nicht zu diesem Plugin');
+      if (!s || !allowedOwners.has(s.entry.owner)) throw new Error('Session gehört nicht zu diesem Plugin');
       return s;
     };
     return {

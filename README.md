@@ -2,7 +2,7 @@
 
 **One window for all your AI coding agents.**
 
-Aioc runs any number of [Claude Code](https://code.claude.com), [Codex](https://github.com/openai/codex) and [Pi](https://github.com/earendil-works/pi) sessions — plus plain PowerShell — side by side in a single desktop window, with a sidebar that tells you at a glance **which agent is working, which one is waiting for your answer, and which one is done.**
+Aioc runs any number of [Claude Code](https://code.claude.com), [Codex](https://github.com/openai/codex), [Antigravity](https://antigravity.google) (`agy`) and [Pi](https://github.com/earendil-works/pi) sessions — plus plain PowerShell — side by side in a single desktop window, with a sidebar that tells you at a glance **which agent is working, which one is waiting for your answer, and which one is done.**
 
 ![Aioc – sidebar with live session status, terminal on the right](docs/screenshot.png)
 
@@ -16,12 +16,12 @@ The status is **not guessed from screen output**. Each agent reports it through 
 
 - **Real terminals.** Every session is a genuine ConPTY terminal rendered with xterm.js. Fullscreen TUIs, colors, Nerd Font glyphs, mouse, scrollback, search — everything behaves as it does in Windows Terminal.
 - **Live status per session.** `running` · `waiting for you` (questions, permission prompts, approval overlays) · `done` (with an unread marker until you look) · `idle` · `exited`. Counters in the title bar, an event feed, filters for *waiting / running / done*.
-- **Exact status sources.** Claude Code hooks (via `--settings`), Codex hooks (via `-c`), a tiny Pi extension (via `-e`), the terminal title as a second, independent source, and an activity heuristic for plain shells. All of it is passed on the command line of the individual session.
+- **Exact status sources.** Claude Code hooks (via `--settings`), Codex hooks (via `-c`), Antigravity's OSC 7501 status stream (via `AGY_CLI_OSC7501=on`), a tiny Pi extension (via `-e`), the terminal title as a second, independent source, and an activity heuristic for plain shells. All of it is passed on the command line or environment of the individual session.
 - **Daemon and window are separate.** A small background service owns the sessions. Closing the window — or crashing it, or updating Aioc — never kills an agent. Reopen the window and everything is still there, scrollback included.
-- **Survives reboots.** Session list and scrollback are persisted continuously. After a restart every session comes back as *"before restart"* with its full terminal content; one click resumes the agent's own conversation (`claude --resume`, `codex resume`, `pi --session`) using the IDs Aioc learned from the hooks. Only a turn that was mid-flight at shutdown is lost.
+- **Survives reboots.** Session list and scrollback are persisted continuously. After a restart every session comes back as *"before restart"* with its full terminal content; one click resumes the agent's own conversation (`claude --resume`, `codex resume`, `agy --conversation`, `pi --session`) using the IDs Aioc learned. Only a turn that was mid-flight at shutdown is lost.
 - **Built for many sessions.** Split panes freely — right, down, as deep as you like, drag the dividers, zoom one pane to the full area. Plus folder groups you can collapse, sorting by folder, status or agent type, drag-and-drop ordering, a resizable sidebar, remembered window position, and Windows-Terminal-style keys.
 - **The UI is a web app.** The daemon serves it; Electron is just the shell around it. Switch on **LAN** and the same UI runs on a laptop, a tablet (as a PWA) or a second PC — over HTTPS/WSS, with a pinned self-signed certificate or a trusted one from Tailscale (see [Use it from another machine](#use-it-from-another-machine-lan)).
-- **Every pane has its own header.** In split view each terminal carries name, agent, folder, branch, session ID and its own actions. Agents show up as small icons (Claude, OpenAI for Codex, Pi, PowerShell) — in the list right-aligned, with the name as tooltip.
+- **Every pane has its own header.** In split view each terminal carries name, agent, folder, branch, session ID and its own actions. Agents show up as small icons (Claude, OpenAI for Codex, Antigravity for `agy`, Pi, PowerShell) — in the list right-aligned, with the name as tooltip.
 - **Branch at a glance.** Folder headings and pane headers show the git branch and the working tree, e.g. `⎇ main ±3 ↑1` (changes · ahead · behind). Read-only, and always with `--no-optional-locks`, so Aioc never takes the index lock away from an agent that is committing.
 - **Names stay in sync, both ways.** Rename a session inside Claude Code or Codex with `/rename` and Aioc picks it up; rename it in Aioc with F2 and Aioc sets it in the agent. Without a name of your own, Aioc follows Claude's own session title too (see [Session names](#session-names)).
 - **A control CLI for scripts and agents.** `aioc-ctl` lists sessions, reads a terminal as plain text, sends a prompt, answers a dialog and waits for the result — so one agent can hand work to another. See [Scripting](#scripting-aioc-ctl).
@@ -30,13 +30,13 @@ The status is **not guessed from screen output**. Each agent reports it through 
 
 - **No git automation.** No worktree creation, no branch juggling, no fanning one prompt out to five agents, no merging. Aioc *shows* branch and working-tree state and never runs a git command that writes. Aioc knows your folders — you keep control of your repositories.
 - **No diff review, no editor, no embedded browser.** Aioc is terminals plus overview. Nothing else.
-- **No changes to `~/.claude`, `~/.codex` or `~/.pi`.** Everything Aioc needs is injected per session start. Your existing hooks, settings and extensions keep working exactly as before.
+- **No changes to `~/.claude`, `~/.codex`, `~/.gemini` or `~/.pi`.** Everything Aioc needs is injected per session start. Your existing hooks, settings and extensions keep working exactly as before.
 - **No cloud, no accounts, no telemetry.** Everything lives on your machine under `%USERPROFILE%\.aioc`.
 - **No agents starting behind your back.** After a reboot Aioc shows you what was running and lets you decide, per click, what to resume.
 
 ## Quick start
 
-Requirements: Windows 10/11 · [Node.js](https://nodejs.org) ≥ 20 (developed on 26) · the agents you want on your `PATH` (`claude`, `codex`, `pi`) · PowerShell 7 (`pwsh`) for shell sessions. Pi needs ≥ 0.84.4 for its *waiting* events.
+Requirements: Windows 10/11 · [Node.js](https://nodejs.org) ≥ 20 (developed on 26) · the agents you want on your `PATH` (`claude`, `codex`, `agy`, `pi`) · PowerShell 7 (`pwsh`) for shell sessions. Pi needs ≥ 0.84.4 for its *waiting* events; `agy` needs ≥ 1.4.0 for OSC 7501 status reporting.
 
 ```powershell
 git clone https://github.com/ma-schulz/aioc.git
@@ -64,21 +64,21 @@ Browser instead of Electron: open `http://127.0.0.1:43117/?token=<token>` — th
 | `Ctrl+Shift+N` | New session |
 | `Ctrl+1 … 0` | Switch to the 1st … 10th session in the list — loads it into the focused pane, or moves focus to the pane that already shows it |
 | `Ctrl+Shift+1 … 0` | The same for the 11th … 20th session |
-| `F2` / `Ctrl+Shift+R` | Rename the current session (Enter saves, Esc cancels) — the name is set inside the agent as well (Claude Code, Codex) |
+| `F2` / `Ctrl+Shift+R` | Rename the current session (Enter saves, Esc cancels) — the name is set inside the agent as well (Claude Code, Codex, `agy`) |
 | `Alt+Shift+D` | Split the focused pane along its longer side |
 | `Alt+Shift++` / `Alt+Shift+-` | Split to the right / split downwards |
 | `Alt+Shift+Z` | Zoom the focused pane to the full area (again: back) |
 | `Alt+Shift+W` | Close the pane — the session keeps running and stays in the list |
 | `Alt+← → ↑ ↓` | Move focus to the neighbouring pane (like Windows Terminal) |
-| `Shift+Enter` | New line in the agent's prompt without submitting (Claude Code, Codex, Pi) |
-| `Ctrl+Enter` | Forward Ctrl+Enter distinctly to the agent; the action follows its keybinding (Claude Code, Codex, Pi) |
+| `Shift+Enter` | New line in the agent's prompt without submitting (Claude Code, Codex, `agy`, Pi) |
+| `Ctrl+Enter` | Forward Ctrl+Enter distinctly to the agent; the action follows its keybinding (Claude Code, Codex, `agy`, Pi) |
 | `Ctrl+Shift+F` | Search in the current terminal |
-| `Ctrl+C` / `Ctrl+V` | Copy when text is selected (otherwise sends the interrupt) / paste — text is pasted, an **image** in the clipboard is handed to the agent (Claude Code, Codex) |
+| `Ctrl+C` / `Ctrl+V` | Copy when text is selected (otherwise sends the interrupt) / paste — text is pasted, an **image** in the clipboard is handed to the agent (Claude Code, Codex, `agy`) |
 | Right click | Copy the selection, or paste if nothing is selected |
 
 - Click a pane to focus it; the sidebar always loads sessions into the focused pane.
 - Click a folder heading to collapse the group. Collapsed groups show `?` (waiting) and `●` (unread) as a hint.
-- The `⇅` switch cycles through folder (grouped), status (waiting first, flat) and type (claude, codex, pi, pwsh — flat).
+- The `⇅` switch cycles through folder (grouped), status (waiting first, flat) and type (claude, codex, agy, pi, pwsh — flat).
 - Sessions are grouped by where they actually work, not where they were started. Claude Code and Codex report their current working directory with every hook, so a worker that moves into another worktree moves into that worktree's group, with its branch and state in the heading (`⎇ 7224_neuanlage ±2`) and its path in the pane header. A subfolder of the same worktree stays in the group. In the flat lists (status, type) every row carries its worktree name and state instead, e.g. `SOCS ⎇ master ±3 ↑1`.
 - Drag a session by its `⠿` handle (or anywhere in the row, with the mouse) to reorder it inside its folder group — the folder belongs to the session, so it stays in its group. The order lives in the daemon, so every window and every device shows the same one. In the status and type views the order comes from the sort itself, so dragging is off there.
 - Drag the divider to resize the sidebar; double-click resets it. The same works for the dividers between panes — double-click puts them back to half and half.
@@ -111,6 +111,7 @@ Start Aioc. Every previous session is listed as *"vor Neustart · wiederherstell
 | --- | --- | --- |
 | Claude Code | `--settings %USERPROFILE%\.aioc\claude-settings.json` — hooks run **in addition** to your global and project hooks | `UserPromptSubmit`, `PreToolUse` (AskUserQuestion), `PermissionRequest`, `Notification`, `Stop`, `SessionStart/End`; title spinner as second source |
 | Codex | `-c "hooks.<Event>=[…]"` plus `--dangerously-bypass-hook-trust` (see note) | `UserPromptSubmit`, `PermissionRequest`, `Stop`, `SessionStart`; the `Action Required` terminal title for approval overlays |
+| Antigravity (`agy`) | `AGY_CLI_OSC7501=on` | OSC 7501 (`state=idle`, `working`, `blocked` with `kind=permission\|question`, `done`, `error` and `msg=…`) |
 | Pi | `-e daemon/hooks/aioc-pi-ext.ts` | `agent_start`, `agent_settled`, `ui_prompt_start/end`, `session_start` (with session ID) |
 | pwsh / anything else | — | output flowing → running, 3 s quiet → idle, process exit → exited |
 
@@ -130,7 +131,7 @@ Titles that are not names stay out: `Claude Code`, Codex' bare folder title, the
 
 **Note on Codex:** Codex asks once whether it may run newly configured hooks — and that dialog is one-shot. If it is dismissed, the hooks are silently never executed. Because the only hooks involved are Aioc's own command-line injections, Aioc starts Codex with `--dangerously-bypass-hook-trust`. If you keep your own hooks in `~/.codex/hooks.json`, be aware that this flag covers them too.
 
-**Launch defaults:** every Claude Code session starts with `--remote-control`, so it can be picked up on the phone or at claude.ai/code right away; every Codex session starts in YOLO mode (`--dangerously-bypass-approvals-and-sandbox`, no approvals, no sandbox). Both also apply when a session is restored after a restart. Arguments you give a session yourself win: `--remote-control <name>` replaces the plain flag, and any of `--yolo`, `--full-auto`, `--approve-for-me`, `-a`/`--ask-for-approval` or `-s`/`--sandbox` turns the YOLO default off for that session — Codex refuses to start with `--yolo` twice or together with `--full-auto`.
+**Launch defaults:** every Claude Code session starts with `--remote-control`, so it can be picked up on the phone or at claude.ai/code right away; every Codex session starts in YOLO mode (`--dangerously-bypass-approvals-and-sandbox`, no approvals, no sandbox); every Antigravity (`agy`) session starts with `--remote-control` and `--dangerously-skip-permissions`. All defaults also apply when a session is restored after a restart. Arguments you give a session yourself win: `--remote-control <name>` replaces the plain flag, any of `--yolo`, `--full-auto`, `--approve-for-me`, `-a`/`--ask-for-approval` or `-s`/`--sandbox` turns the Codex YOLO default off, and any of `--dangerously-skip-permissions`, `--mode` or `--sandbox` overrides the `agy` permission default.
 
 ## Scripting (`aioc-ctl`)
 

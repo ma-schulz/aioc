@@ -159,6 +159,7 @@ app.whenReady().then(async () => {
       fs.writeFileSync(BOUNDS_FILE, JSON.stringify(b));
     } catch {}
   });
+  win.on('focus', () => win.webContents.focus());
   win.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.key === 'F12') { win.webContents.toggleDevTools(); e.preventDefault(); }
   });

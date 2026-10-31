@@ -1,6 +1,6 @@
 # aioc-ctl — a guide for agents
 
-This file is written for AI agents (Claude Code, Codex, Pi) that run inside [Aioc](README.md) and want to work with the **other** sessions in the same window: read what they show, hand them a task, wait for the result, answer a question they ask.
+This file is written for AI agents (Claude Code, Codex, Antigravity/`agy`, Pi) that run inside [Aioc](README.md) and want to work with the **other** sessions in the same window: read what they show, hand them a task, wait for the result, answer a question they ask.
 
 You are inside Aioc when the environment variable `AIOC_SESSION` is set (it holds your own session ID). Then `aioc-ctl` is on your `PATH`. Outside Aioc it works too, as long as the Aioc daemon runs on this machine: `node <aioc>/cli/aioc-ctl.js …`.
 

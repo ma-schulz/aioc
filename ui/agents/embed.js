@@ -12,6 +12,7 @@ const END = '/* agent-icons:end */';
 const FILES = [
   ['claude', 'claude.svg', 'image/svg+xml'],
   ['codex', 'codex.svg', 'image/svg+xml'],
+  ['agy', 'agy.svg', 'image/svg+xml'],
   ['pi', 'pi.svg', 'image/svg+xml'],
   ['pwsh', 'pwsh.png', 'image/png'],
 ];
