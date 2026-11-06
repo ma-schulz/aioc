@@ -407,11 +407,19 @@ class Session {
   }
 
   parseTitles(chunk) {
-    this.titleBuf = (this.titleBuf + chunk).slice(-4096);
-    this.parseOsc7501();
+    const buf = this.titleBuf + chunk;
+    this.parseOsc7501(buf);
     let m, last = null;
     OSC_TITLE.lastIndex = 0;
-    while ((m = OSC_TITLE.exec(this.titleBuf))) last = m[1];
+    while ((m = OSC_TITLE.exec(buf))) last = m[1];
+    const lastEsc = buf.lastIndexOf("\x1b]");
+    this.titleBuf = lastEsc >= 0 && buf.length - lastEsc < 2048 ? buf.slice(lastEsc) : "";
+    if (this.entry.agent === "agy" && this.entry.status !== "running" && /Working\x1b\[[0-9;]*m\.\.\./.test(chunk)) {
+      if (!this.entry.agentSessionId) this.entry.agentSessionId = lookupAgyConversationId(this.entry.cwd);
+      const step = readAgyLatestStep(this.entry.agentSessionId);
+      this.setStatus("running", step || "arbeitet", "osc7501");
+      this.startAgyPoll();
+    }
     if (last === null || last === this.entry.title) return;
     this.entry.title = last;
     this.syncName();
@@ -427,11 +435,11 @@ class Session {
 
   // OSC 7501 (Program Status Protocol, von agy >= 1.4 bei AGY_CLI_OSC7501=on gesendet):
   // Format: state=<idle|working|blocked|done|error|clear>[:kind=<permission|question|...>][:app=...][:msg=<base64>]
-  parseOsc7501() {
+  parseOsc7501(buf) {
     let m, last = null;
     OSC_7501.lastIndex = 0;
-    while ((m = OSC_7501.exec(this.titleBuf))) last = m[1];
-    if (!last || last === this.lastOsc7501) return;
+    while ((m = OSC_7501.exec(buf))) last = m[1];
+    if (!last) return;
     this.lastOsc7501 = last;
     const fields = {};
     for (const part of last.split(':')) {

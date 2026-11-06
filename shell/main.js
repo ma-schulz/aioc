@@ -2,7 +2,7 @@
 // needed; with a connection link as argument it opens a remote daemon (HTTPS/WSS) and pins the
 // certificate to the fingerprint in the link instead of showing a certificate warning.
 // Closing the window never touches the daemon or its sessions.
-const { app, BrowserWindow, Menu, session, dialog, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, session, dialog, shell, ipcMain, screen } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
@@ -139,6 +139,18 @@ app.whenReady().then(async () => {
   const BOUNDS_FILE = path.join(AIOC_HOME, 'window.json');
   let bounds = null;
   try { bounds = JSON.parse(fs.readFileSync(BOUNDS_FILE, 'utf8')); } catch {}
+  if (bounds && typeof bounds.width === 'number' && typeof bounds.height === 'number') {
+    const wa = screen.getDisplayMatching({
+      x: typeof bounds.x === 'number' ? bounds.x : 0,
+      y: typeof bounds.y === 'number' ? bounds.y : 0,
+      width: bounds.width,
+      height: bounds.height,
+    }).workArea;
+    bounds.width = Math.min(bounds.width, wa.width);
+    bounds.height = Math.min(bounds.height, wa.height);
+    if (typeof bounds.x === 'number') bounds.x = Math.max(wa.x, Math.min(bounds.x, wa.x + wa.width - bounds.width));
+    if (typeof bounds.y === 'number') bounds.y = Math.max(wa.y, Math.min(bounds.y, wa.y + wa.height - bounds.height));
+  }
   const win = new BrowserWindow({
     width: bounds?.width || 1500, height: bounds?.height || 950,
     x: bounds?.x, y: bounds?.y, minWidth: 900, minHeight: 500,

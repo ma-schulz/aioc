@@ -90,10 +90,16 @@
       // Altes Format (bis 09/2026): festes Raster mit 1, 2 oder 4 Panes
       const t = lay?.tree ? deserTree(lay.tree) : [1, 2, 4].includes(lay?.panes?.length) ? gridTree(lay.panes) : null;
       if (!t) return;
-      for (const leaf of leavesOf(t)) if (!(pluginOf(leaf.id) ? hasPlugin(pluginOf(leaf.id)) : sessions.some(s => s.id === leaf.id))) leaf.id = null;
+      for (const leaf of leavesOf(t)) {
+        if (!(pluginOf(leaf.id) ? hasPlugin(pluginOf(leaf.id)) : sessions.some(s => s.id === leaf.id))) {
+          leaf.id = null;
+          leaf.locked = false;
+        }
+      }
       tree = t;
       panes = leavesOf(tree);
       focused = Math.min(Math.max(0, lay.focused || 0), panes.length - 1);
+      enforceUnlockedPane();
       zoomed = panes.length > 1 && lay.zoom >= 0 ? panes[lay.zoom] || null : null;
       layoutDirty = true;
     } catch {}
@@ -102,7 +108,7 @@
   const terms = new Map(); // id -> {term, fit, search, wrap, attached}
 
   // ---------- Layout: Baum aus Splits ----------
-  // Blatt = ein Pane { id, el }, Split = { dir: 'row' (nebeneinander) | 'col' (untereinander), ratio, a, b }.
+  // Blatt = ein Pane { id, locked, el }, Split = { dir: 'row' (nebeneinander) | 'col' (untereinander), ratio, a, b }.
   // panes ist die flache Liste der Blätter in Baumreihenfolge, focused ein Index darin.
   const MAX_PANES = 9;
   const isLeaf = n => !n.dir;
@@ -112,16 +118,26 @@
     else { leavesOf(n.a, acc); leavesOf(n.b, acc); }
     return acc;
   }
-  const serTree = n => (isLeaf(n) ? { id: n.id } : { dir: n.dir, ratio: n.ratio, a: serTree(n.a), b: serTree(n.b) });
+  const serTree = n => (isLeaf(n) ? (n.locked ? { id: n.id, locked: true } : { id: n.id }) : { dir: n.dir, ratio: n.ratio, a: serTree(n.a), b: serTree(n.b) });
   function deserTree(o) {
     if (o && (o.dir === 'row' || o.dir === 'col')) return { dir: o.dir, ratio: clampRatio(o.ratio), a: deserTree(o.a), b: deserTree(o.b) };
-    return { id: typeof o?.id === 'string' ? o.id : null };
+    return { id: typeof o?.id === 'string' ? o.id : null, locked: !!o?.locked };
   }
   function gridTree(ids) {
-    const leaf = i => ({ id: ids[i] ?? null });
+    const leaf = i => ({ id: ids[i] ?? null, locked: false });
     if (ids.length === 4) return { dir: 'col', ratio: 0.5, a: { dir: 'row', ratio: 0.5, a: leaf(0), b: leaf(1) }, b: { dir: 'row', ratio: 0.5, a: leaf(2), b: leaf(3) } };
     if (ids.length === 2) return { dir: 'row', ratio: 0.5, a: leaf(0), b: leaf(1) };
     return leaf(0);
+  }
+  // Mindestens ein Pane muss immer ungesperrt bleiben (und ein einzelnes Pane ist nie gesperrt)
+  function enforceUnlockedPane() {
+    if (panes.length <= 1) {
+      if (panes[0]) panes[0].locked = false;
+      return;
+    }
+    if (panes.every(p => p.locked)) {
+      (panes[focused] || panes[panes.length - 1]).locked = false;
+    }
   }
   function replaceNode(n, target, repl) {
     if (n === target) return repl;
@@ -141,7 +157,7 @@
   // Windows-Tastencode (VK_OEM_PLUS 187 / VK_OEM_MINUS 189) und am Ziffernblock erkennen
   const isPlus = e => e.key === '+' || e.keyCode === 187 || e.code === 'NumpadAdd';
   const isMinus = e => e.key === '-' || e.key === '_' || e.keyCode === 189 || e.code === 'NumpadSubtract';
-  const paneKey = e => e.altKey && e.shiftKey && !e.ctrlKey && (isPlus(e) || isMinus(e) || /^[dzw]$/i.test(e.key));
+  const paneKey = e => e.altKey && e.shiftKey && !e.ctrlKey && (isPlus(e) || isMinus(e) || /^[dzwl]$/i.test(e.key));
 
   // Ctrl+1…0 waehlt die ersten zehn Sessions der Liste, mit Shift die Plaetze 11–20. Die Ziffer kommt
   // aus e.code, denn auf deutscher Tastatur liefert Shift+1 ein "!". AltGr (= Ctrl+Alt) bleibt frei,
@@ -193,11 +209,21 @@
         if (pendingSelectNew && sessions.length) {
           const newest = [...sessions].sort((a, b) => b.createdAt - a.createdAt)[0];
           pendingSelectNew = false;
-          panes[focused].id = newest.id;
+          const targetIdx = resolveTargetPaneIndex(focused);
+          panes[targetIdx].id = newest.id;
+          focused = targetIdx;
+          if (zoomed) zoomed = panes[targetIdx];
+          saveLayout();
           requestAnimationFrame(() => terms.get(newest.id)?.term.focus());
         }
         if (m.t === 'hello') restoreLayout();
-        for (const p of panes) if (p.id && !(pluginOf(p.id) ? hasPlugin(pluginOf(p.id)) : sessionOf(p.id))) p.id = null;
+        for (const p of panes) {
+          if (p.id && !(pluginOf(p.id) ? hasPlugin(pluginOf(p.id)) : sessionOf(p.id))) {
+            p.id = null;
+            p.locked = false;
+          }
+        }
+        enforceUnlockedPane();
         if (!activeId() && sessions.length && panes.length === 1 && !MOBILE.matches) {
           const next = sortedSessions()[0] || sessions.find(s => !s.owner) || sessions[0];
           if (next) panes[0].id = next.id;
@@ -244,9 +270,23 @@
       } else if (m.t === 'data') {
         const t = terms.get(m.id);
         if (t) t.term.write(m.d);
+        const s = sessionOf(m.id);
+        if (s && s.agent === 'agy' && typeof m.d === 'string') {
+          let nextSt = null;
+          if (m.d.includes('\x1b]7501;state=working') || /Working\x1b\[[0-9;]*m\.\.\./.test(m.d)) nextSt = 'running';
+          else if (m.d.includes('\x1b]7501;state=blocked')) nextSt = 'waiting';
+          else if (m.d.includes('\x1b]7501;state=done') || m.d.includes('\x1b]7501;state=error')) nextSt = 'done';
+          if (nextSt && s.status !== nextSt) {
+            s.status = nextSt;
+            if (nextSt === 'running') { s.unread = false; s.detail = 'arbeitet'; }
+            for (const v of pluginViews.values()) v.dirty = true;
+            renderAll();
+          }
+        }
       } else if (m.t === 'gone') {
         dropTerm(m.id);
-        for (const p of panes) if (p.id === m.id) p.id = null;
+        for (const p of panes) if (p.id === m.id) { p.id = null; p.locked = false; }
+        enforceUnlockedPane();
         if (!activeId() && sessions.length && panes.length === 1 && !MOBILE.matches) {
           const next = sortedSessions().find(s => s.id !== m.id) || sessions.find(s => s.id !== m.id && !s.owner) || sessions.find(s => s.id !== m.id);
           if (next) panes[0].id = next.id;
@@ -654,10 +694,17 @@
   }
   const fitAll = () => requestAnimationFrame(() => panes.forEach((_, i) => fitPane(i)));
 
+  // Ist das Ziel-Pane gesperrt, weichen Session-/Plugin-Wechsel auf das erste nicht gesperrte Pane aus
+  function resolveTargetPaneIndex(preferredIdx = focused) {
+    if (panes[preferredIdx] && !panes[preferredIdx].locked) return preferredIdx;
+    const firstUnlocked = panes.findIndex(p => !p.locked);
+    return firstUnlocked >= 0 ? firstUnlocked : preferredIdx;
+  }
+
   function assignToPane(paneIdx, id) {
-    // Session ist schon in einem anderen Pane sichtbar: dorthin fokussieren statt sie zu verschieben
+    // Session ist schon in einem Pane sichtbar: dorthin fokussieren statt sie zu verschieben
     const shownIn = panes.findIndex(p => p.id === id);
-    if (shownIn >= 0 && shownIn !== paneIdx) {
+    if (shownIn >= 0) {
       focused = shownIn;
       if (zoomed) zoomed = panes[shownIn]; // gezoomt: die Zoom-Ansicht wechselt mit
       if (MOBILE.matches) document.body.classList.add('show-term');
@@ -668,8 +715,10 @@
       if (s0 && s0.unread) send({ t: 'markRead', id });
       return;
     }
-    panes[paneIdx].id = id;
-    focused = paneIdx;
+    const targetIdx = resolveTargetPaneIndex(paneIdx);
+    panes[targetIdx].id = id;
+    focused = targetIdx;
+    if (zoomed) zoomed = panes[targetIdx];
     saveLayout();
     if (!pluginOf(id)) ensureAttached(id);
     if (MOBILE.matches) document.body.classList.add('show-term'); // Handy: Terminal statt Liste zeigen
@@ -702,6 +751,7 @@
   function relayout(focusLeaf) {
     panes = leavesOf(tree);
     focused = Math.max(0, panes.indexOf(focusLeaf));
+    enforceUnlockedPane();
     if (zoomed && !panes.includes(zoomed)) zoomed = null;
     layoutDirty = true;
     saveLayout();
@@ -746,7 +796,7 @@
       const r = leaf.el?.getBoundingClientRect();
       dir = !r || r.width >= r.height ? 'row' : 'col';
     }
-    const fresh = { id: null };
+    const fresh = { id: null, locked: false };
     tree = replaceNode(tree, leaf, { dir, ratio: 0.5, a: leaf, b: fresh });
     relayout(fresh);
   }
@@ -764,6 +814,24 @@
     if (MOBILE.matches || (panes.length < 2 && !zoomed)) return;
     zoomed = zoomed ? null : panes[focused];
     layoutDirty = true;
+    saveLayout();
+    renderAll();
+    focusActiveTerm();
+  }
+
+  function canLockPane(leaf) {
+    if (!leaf || panes.length < 2) return false;
+    if (leaf.locked) return true;
+    return panes.some(p => p !== leaf && !p.locked);
+  }
+
+  function toggleLock(leaf = panes[focused]) {
+    if (!leaf || MOBILE.matches || panes.length < 2) return;
+    if (!leaf.locked && !canLockPane(leaf)) {
+      flashError('Mindestens ein Pane muss ungesperrt bleiben.');
+      return;
+    }
+    leaf.locked = !leaf.locked;
     saveLayout();
     renderAll();
     focusActiveTerm();
@@ -1103,7 +1171,10 @@
     return true;
   }
 
-  // Jedes Pane: eigene Kopfzeile (Name, Agent, Ordner, Branch, Session, Aktionen, Teilen/Zoom) + Terminalbereich
+  const LOCK_SVG_CLOSED = '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.2" y="5.5" width="7.6" height="5.3" rx="1.2"/><path d="M3.8 5.5V3.8a2.2 2.2 0 0 1 4.4 0v1.7"/></svg>';
+  const LOCK_SVG_OPEN = '<svg viewBox="0 0 12 12" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.2" y="5.5" width="7.6" height="5.3" rx="1.2"/><path d="M3.8 5.5V3.6a2.2 2.2 0 0 1 4.2-.8"/></svg>';
+
+  // Jedes Pane: eigene Kopfzeile (Name, Agent, Ordner, Branch, Session, Aktionen, Teilen/Zoom/Sperren) + Terminalbereich
   function buildPane(leaf) {
     const el = document.createElement('div');
     el.className = 'pane';
@@ -1123,6 +1194,7 @@
         <button class="btn danger b-close s-only" hidden>Schließen</button>
         <button class="btn danger b-dispose s-only" hidden>Entfernen</button>
         <span class="pbtns">
+          <button class="btn icon b-lock" title="Pane sperren – wird beim Session-Wechsel übersprungen (Alt+Shift+L)" aria-pressed="false"></button>
           <button class="btn icon b-split-r" title="Rechts teilen (Alt+Shift+Plus)">◧</button>
           <button class="btn icon b-split-d" title="Unten teilen (Alt+Shift+Minus)">⬒</button>
           <button class="btn icon b-zoom" title="Zoom an/aus (Alt+Shift+Z)" aria-pressed="false">⤢</button>
@@ -1137,6 +1209,7 @@
       const idx = panes.indexOf(leaf);
       if (idx >= 0 && idx !== focused) { focused = idx; saveLayout(); renderAll(); }
     }, true);
+    el.querySelector('.b-lock').addEventListener('click', () => toggleLock(leaf));
     el.querySelector('.b-split-r').addEventListener('click', () => splitFocused('row'));
     el.querySelector('.b-split-d').addEventListener('click', () => splitFocused('col'));
     el.querySelector('.b-zoom').addEventListener('click', toggleZoom);
@@ -1224,6 +1297,7 @@
       const head = el.querySelector('.phead');
       const body = el.querySelector('.pane-body');
       el.classList.toggle('focused', i === focused);
+      el.classList.toggle('locked', !!p.locked);
       el.classList.toggle('nosess', !s && !plugInfo);
       el.classList.toggle('plug-pane', !!plugInfo);
       el.classList.toggle('owned', !!s?.owner);
@@ -1237,6 +1311,21 @@
         if (v.parentElement !== body) body.appendChild(v);
       }
       const full = panes.length >= MAX_PANES;
+      const lockBtn = head.querySelector('.b-lock');
+      const lockAllowed = canLockPane(p);
+      lockBtn.hidden = !multi;
+      lockBtn.disabled = !p.locked && !lockAllowed;
+      lockBtn.setAttribute('aria-pressed', p.locked ? 'true' : 'false');
+      const wantLockState = p.locked ? 'closed' : 'open';
+      if (lockBtn.dataset.icon !== wantLockState) {
+        lockBtn.dataset.icon = wantLockState;
+        lockBtn.innerHTML = p.locked ? LOCK_SVG_CLOSED : LOCK_SVG_OPEN;
+      }
+      lockBtn.title = p.locked
+        ? 'Pane entsperren (Alt+Shift+L)'
+        : lockAllowed
+          ? 'Pane sperren – wird beim Session-Wechsel übersprungen (Alt+Shift+L)'
+          : 'Mindestens ein Pane muss ungesperrt bleiben';
       head.querySelector('.b-split-r').disabled = full;
       head.querySelector('.b-split-d').disabled = full;
       head.querySelector('.b-zoom').hidden = !multi;
@@ -1603,6 +1692,7 @@
       const k = e.key.toLowerCase();
       if (k === 'd') splitFocused('auto');
       else if (k === 'z') toggleZoom();
+      else if (k === 'l') toggleLock();
       else if (k === 'w') closePane();
       else if (isPlus(e)) splitFocused('row');
       else splitFocused('col');
