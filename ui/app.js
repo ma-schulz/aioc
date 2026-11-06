@@ -253,6 +253,7 @@
       } else if (m.t === 'konten') {
         konten = Array.isArray(m.konten) ? m.konten : [];
         renderKonten(true);
+        renderKontoWarn();
       } else if (m.t === 'error') {
         flashError(m.message);
       } else if (m.t === 'snapshot') {
@@ -1031,6 +1032,7 @@
     document.querySelectorAll('.chip[data-f]').forEach(ch => ch.setAttribute('aria-pressed', ch.dataset.f === filter ? 'true' : 'false'));
     $('sortbtn').textContent = '⇅ ' + (SORT_LABEL[sortMode] || 'Ordner');
     $('restoreall-wrap').hidden = sessions.filter(s => !s.running).length < 2;
+    renderKontoWarn();
 
     // Sidebar-Liste
     const list = $('list');
@@ -1544,13 +1546,89 @@
   function kontoMemory() { try { return JSON.parse(localStorage.getItem('aioc-konto') || '{}'); } catch { return {}; } }
   function kontoLabel(k) {
     const name = k.org || k.id;
-    return `${name}${k.email ? ' · ' + k.email : ''}${k.id === 'standard' ? ' (Standard)' : ` [${k.id}]`}${k.angemeldet ? '' : ' – nicht angemeldet'}`;
+    const login = !k.angemeldet ? ' – nicht angemeldet'
+      : k.status === 'abgelaufen' ? ' – Login abgelaufen'
+      : k.loginBis ? ` · Login bis ${bisText(k.loginBis)}` : '';
+    return `${name}${k.email ? ' · ' + k.email : ''}${k.id === 'standard' ? ' (Standard)' : ` [${k.id}]`}${login}`;
   }
   // Kennzeichen einer Session, die mit einem eigenen Konto läuft (das Standardkonto bleibt unmarkiert)
   function kontoChip(k) {
     const c = mk('span', 'konto', k.label);
     c.title = 'Claude-Konto: ' + k.label;
+    const st = konten.find(x => x.id === k.id);
+    if (st && KONTO_WARN.has(st.status)) { c.classList.add('warn'); c.title += '\n' + kontoWarnText(st); }
     return c;
+  }
+
+  // ---------- Claude-Anmeldungen: Warnband über der Liste ----------
+  // Die claude.ai-Anmeldung läuft rund einmal im Monat ab; Claude warnt selbst erst drei Tage vorher
+  // und nur beim Start einer Session. Der Daemon liefert Status und Ablauf je Konto (claude-login.js).
+  const KONTO_WARN = new Set(['bald', 'abgelaufen', 'abgemeldet', 'fremdeOrg']);
+  const kontoName = k => k.id === 'standard' ? 'Standard' : (k.erwartetOrg || k.org || k.id);
+  function bisText(ms) { return new Date(ms).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); }
+  function restText(ms) {
+    const d = ms - Date.now();
+    if (d < 864e5) { const h = Math.max(1, Math.round(d / 36e5)); return `in ${h} Stunde${h === 1 ? '' : 'n'}`; }
+    const t = Math.round(d / 864e5);
+    return `in ${t} Tag${t === 1 ? '' : 'en'}`;
+  }
+  function kontoWarnText(k) {
+    const n = `„${kontoName(k)}“`;
+    if (k.status === 'bald') return `Claude-Login ${n} läuft ${restText(k.loginBis)} ab (${bisText(k.loginBis)})`;
+    if (k.status === 'abgelaufen') return `Claude-Login ${n} ist abgelaufen – Sessions dieses Kontos arbeiten nicht mehr`;
+    if (k.status === 'abgemeldet') return `Claude-Konto ${n} ist nicht mehr angemeldet`;
+    if (k.status === 'fremdeOrg') return `Konto „${k.id}“ ist bei „${k.org}“ angemeldet statt bei „${k.erwartetOrg}“`;
+    return '';
+  }
+  function kontoLogin(ids) {
+    pendingSelectNew = true; // die Login-Session ins aktive Pane holen: Browser-Link und Code-Eingabe stehen dort
+    send({ t: 'kontoLogin', konten: ids, cols: lastSize.cols, rows: lastSize.rows });
+  }
+  let kontoWarnKey = '';
+  function renderKontoWarn() {
+    const box = $('kontowarn');
+    const due = konten.filter(k => KONTO_WARN.has(k.status));
+    // Die übrigen angemeldeten Konten gleich mit erneuern: ein Termin im Monat statt mehrerer
+    const rest = konten.filter(k => !KONTO_WARN.has(k.status) && k.status !== 'offen' && !k.login);
+    const idle = due.filter(k => !k.login);
+    const key = JSON.stringify([due.map(k => [k.id, k.login, kontoWarnText(k)]), idle.length ? rest.map(k => [k.id, k.loginBis]) : []]);
+    if (key === kontoWarnKey) return; // nur bei Änderung neu aufbauen, sonst gehen Klicks verloren
+    kontoWarnKey = key;
+    box.replaceChildren();
+    box.hidden = !due.length;
+    for (const k of due) {
+      const w = mk('div', 'kwarn' + (k.status === 'bald' ? '' : ' err'));
+      w.title = [k.org, k.email, k.loginBis ? 'Login gültig bis ' + bisText(k.loginBis) : ''].filter(Boolean).join('\n');
+      w.append(mk('div', 'txt', kontoWarnText(k)));
+      const row = mk('div', 'row');
+      if (k.login === 'laeuft') row.append(mk('span', 'hint', 'Anmeldung läuft – im Browser bestätigen'));
+      else if (k.login === 'wartet') row.append(mk('span', 'hint', 'wartet auf die vorige Anmeldung'));
+      else {
+        const b = mk('button', 'btn', 'Neu anmelden');
+        b.title = 'Startet „claude auth login“ für dieses Konto – im Browser die richtige Organisation wählen';
+        b.addEventListener('click', () => kontoLogin([k.id]));
+        row.append(b);
+        if (k.status === 'fremdeOrg') {
+          const ok = mk('button', 'btn dim', 'Passt so');
+          ok.title = `„${k.org}“ künftig als Organisation dieses Kontos ansehen`;
+          ok.addEventListener('click', () => send({ t: 'kontoOrgOk', konto: k.id }));
+          row.append(ok);
+        }
+      }
+      w.append(row);
+      box.append(w);
+    }
+    if (rest.length && idle.length) {
+      const w = mk('div', 'kwarn alle');
+      w.append(mk('div', 'txt', 'Gleich mit erneuern: ' + rest.map(k => kontoName(k) + (k.loginBis ? ` (bis ${bisText(k.loginBis)})` : '')).join(', ')));
+      const row = mk('div', 'row');
+      const b = mk('button', 'btn', 'Alle nacheinander anmelden');
+      b.title = 'Startet die Anmeldungen nacheinander – jede im Browser bestätigen';
+      b.addEventListener('click', () => kontoLogin([...idle, ...rest].map(k => k.id)));
+      row.append(b);
+      w.append(row);
+      box.append(w);
+    }
   }
   // Subagenten-Informationen aus dem Büro-Plugin für die linke Seitenleiste mitnutzen
   function sessionSubagents(sid) {

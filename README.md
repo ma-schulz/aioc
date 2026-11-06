@@ -95,6 +95,16 @@ Claude Code keeps its login in a configuration folder. Starting `claude` with `C
 
 - A session with its own account carries a small tag with the organisation name, in the sidebar and in the header. The default account `%USERPROFILE%\.claude` stays unmarked.
 - The account stays with the session when it is restored.
+
+#### Login expiry
+
+A claude.ai login lasts about a month. Claude Code warns only three days ahead and only when a session starts, so long-running sessions miss it. Aioc reads the end of each account's login (`refreshTokenExpiresAt` in `.credentials.json`) at startup and every 10 minutes:
+
+- From five days before the end, a band above the session list names the account and the date, and the event list says so once. An expired login turns the band and the account tag red.
+- **Neu anmelden** starts `claude auth login` for that account as a visible pwsh session in the active pane, so the browser link and the code prompt stay reachable. A successful login removes the session after a few seconds. A failed one stays for reading.
+- **Alle nacheinander anmelden** renews the other accounts in the same go, one after the other, so it is one chore a month instead of one per account.
+- One e-mail address can belong to several organisations, so it is easy to pick the wrong one in the browser. Aioc remembers the first organisation it sees per account in `claude-konten.json` in the Aioc folder and warns when a folder is later logged in elsewhere. **Passt so** accepts the new organisation.
+- `claude setup-token` is no alternative: the token only makes model requests, so Remote Control and claude.ai connectors stop working. Aioc strips `CLAUDE_CODE_OAUTH_TOKEN` like every other `CLAUDE*` variable.
 - Each folder has its own settings, MCP servers and memory. To share skills or a project's memory, link the subfolders with junctions.
 
 ### After a reboot

@@ -14,6 +14,7 @@ const { GitWatcher } = require('./git');
 const { createApi } = require('./api');
 const { PluginHost } = require('./plugins');
 const claudeAccounts = require('./claude-accounts');
+const { ClaudeLogin } = require('./claude-login');
 
 const info = state.loadDaemonInfo();
 const PORT = Number(process.env.AIOC_DAEMON_PORT || info.port);
@@ -87,6 +88,7 @@ function setBackgroundOpacity(v) {
 const git = new GitWatcher(() => broadcastSessions());
 
 let plugins = null; // PluginHost, angelegt sobald SessionManager und API stehen
+let login = null; // Claude-Anmeldungen je Konto: Ablauf-Warnung und „Neu anmelden“
 
 const mgr = new SessionManager(PORT, {
   onData: (id, d) => {
@@ -96,13 +98,14 @@ const mgr = new SessionManager(PORT, {
   // Statuswechsel: wartende `aioc-ctl wait` bedienen, Git-Stand zeitnah nachziehen (Agent koennte committet haben)
   onStatus: entry => {
     api.checkWaiters();
+    if (login) login.sessionStatus(entry);
     if (plugins) plugins.sessionsChanged();
     git.refresh(entry.cwd, 3000);
     if (entry.workCwd) git.refresh(entry.workCwd, 3000);
   },
   // Agent arbeitet jetzt woanders (Hook-cwd): dessen Git-Stand sofort holen
   onWorkDir: entry => git.refresh(entry.workCwd, 0),
-  onGone: id => { for (const ws of wss.clients) send(ws, { t: 'gone', id }); api.checkWaiters(); },
+  onGone: id => { for (const ws of wss.clients) send(ws, { t: 'gone', id }); api.checkWaiters(); if (login) login.sessionGone(id); },
 });
 mgr.adoptSaved();
 {
@@ -113,6 +116,7 @@ const api = createApi({ mgr, info, git, isLoopback });
 // Plugins aus <AIOC_HOME>/plugins.json - ohne die Datei bleibt Aioc ohne Erweiterungen
 plugins = new PluginHost({ mgr, publish: p => broadcastPlugin(p) });
 plugins.load();
+login = new ClaudeLogin({ mgr, onChange: () => { broadcastKonten(); broadcastSessions(); } });
 
 function send(ws, obj) { if (ws.readyState === 1) { try { ws.send(JSON.stringify(obj)); } catch {} } }
 
@@ -159,12 +163,17 @@ function lanState() {
 function stateMsg(t) {
   const msg = { t, sessions: mgr.toClient().map(e => ({ ...e, git: git.get(e.cwd), workGit: e.workCwd ? git.get(e.workCwd) : null })), feed: mgr.feed, recents: state.loadUiState().recents || [], lan: lanState(), background: backgroundState() };
   // Plugin-Zustände nur beim Verbindungsaufbau, danach je Plugin über 'plugin'
-  if (t === 'hello') { msg.plugins = plugins.toClient(); msg.konten = claudeAccounts.toClient(); }
+  if (t === 'hello') { msg.plugins = plugins.toClient(); msg.konten = login.toClient(); }
   return msg;
 }
 
 function broadcastPlugin(p) {
   const msg = { t: 'plugin', id: p.id, state: p.state };
+  for (const ws of wss.clients) send(ws, msg);
+}
+
+function broadcastKonten() {
+  const msg = { t: 'konten', konten: login.toClient() };
   for (const ws of wss.clients) send(ws, msg);
 }
 
@@ -279,7 +288,9 @@ wss.on('connection', ws => {
         case 'create':
           mgr.create({ agent: m.agent, cwd: m.cwd, name: m.name, args: m.args, cols: m.cols, rows: m.rows, env: m.agent === 'claude' ? claudeAccounts.envFor(m.konto) : undefined });
           break;
-        case 'konten': send(ws, { t: 'konten', konten: claudeAccounts.toClient({ fresh: true }) }); break;
+        case 'konten': send(ws, { t: 'konten', konten: login.toClient({ fresh: true }) }); break;
+        case 'kontoLogin': login.start(Array.isArray(m.konten) ? m.konten.map(String) : [], { cols: m.cols, rows: m.rows }); break;
+        case 'kontoOrgOk': login.acceptOrg(String(m.konto || '')); break;
         case 'restore': mgr.restore(m.id, m.cols, m.rows); break;
         case 'restoreAll': mgr.restoreAll(m.cols, m.rows); break;
         case 'close': mgr.close(m.id); break;
@@ -383,3 +394,7 @@ function refreshGit() {
 }
 refreshGit();
 setInterval(refreshGit, 5000).unref();
+
+// Claude-Anmeldungen: beim Start und alle 10 min auf baldigen Ablauf oder falsche Organisation prüfen
+login.check();
+setInterval(() => { try { login.check(); } catch {} }, 10 * 60 * 1000).unref();
