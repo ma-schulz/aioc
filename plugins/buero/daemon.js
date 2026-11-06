@@ -79,8 +79,8 @@ function scanClaudeSubagents(session, configDirs, now) {
     const isFinished = stopReason === 'end_turn' || stopReason === 'stop_sequence';
     const isRunning = !isFinished && ageMs < RUNNING_STALE_MS;
 
-    // Nur aktive oder in den letzten Minuten abgeschlossene Subagenten zeigen
-    if (!isRunning && ageMs > 90 * 1000) continue;
+    // Nur aktive oder innerhalb von RECENT_DONE_MS abgeschlossene Subagenten zeigen
+    if (!isRunning && ageMs > RECENT_DONE_MS) continue;
 
     // Letztes benutztes Tool als kleines Detail auslesen
     let lastTool = '';
@@ -190,7 +190,7 @@ function scanCodexSubagents(session, now) {
     const label = mName ? mName[1] : `sub-${++idx}`;
     const detail = mPrompt ? mPrompt[1].slice(0, 80) : label;
     const isRunning = session.status === 'running' && (now - tail.mtimeMs < RUNNING_STALE_MS);
-    if (!isRunning && now - tail.mtimeMs > 90 * 1000) continue;
+    if (!isRunning && now - tail.mtimeMs > RECENT_DONE_MS) continue;
     subMap.set(label, {
       id: `${session.id}-codex-${label}`,
       parentId: session.id,
@@ -213,7 +213,7 @@ function scanPiSubagents(session, saved, now) {
   for (const sub of list) {
     const age = now - (sub.mtimeMs || now);
     const isRunning = sub.status === 'running' && session.status === 'running' && age < RUNNING_STALE_MS;
-    if (!isRunning && age > 90 * 1000) continue;
+    if (!isRunning && age > RECENT_DONE_MS) continue;
     result.push({
       ...sub,
       parentId: session.id,
@@ -227,6 +227,44 @@ function scanPiSubagents(session, saved, now) {
 
 function activate(ctx) {
   let lastJson = '';
+  let cachedWeather = null;
+  let lastWeatherFetch = 0;
+  let weatherFetching = false;
+
+  const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast?latitude=52.0302&longitude=8.5325&current=temperature_2m,weather_code,is_day,cloud_cover,precipitation,rain,showers,snowfall,wind_speed_10m&daily=sunrise,sunset&timezone=Europe%2FBerlin&forecast_days=1';
+  const WEATHER_INTERVAL_MS = 15 * 60 * 1000;
+
+  async function refreshWeather(force = false) {
+    const now = Date.now();
+    if (weatherFetching || (!force && cachedWeather && now - lastWeatherFetch < WEATHER_INTERVAL_MS)) return;
+    if (typeof fetch !== 'function') return;
+    weatherFetching = true;
+    try {
+      const res = await fetch(WEATHER_URL, { signal: AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.current) {
+          cachedWeather = {
+            city: 'Bielefeld',
+            temp: data.current.temperature_2m,
+            code: data.current.weather_code,
+            isDay: data.current.is_day,
+            cloudCover: data.current.cloud_cover,
+            precip: data.current.precipitation,
+            snowfall: data.current.snowfall,
+            windSpeed: data.current.wind_speed_10m,
+            sunrise: data.daily?.sunrise?.[0] || null,
+            sunset: data.daily?.sunset?.[0] || null,
+            fetchedAt: now,
+          };
+          lastWeatherFetch = now;
+          scan();
+        }
+      }
+    } catch {} finally {
+      weatherFetching = false;
+    }
+  }
 
   function getClaudeConfigDirs() {
     const home = os.homedir();
@@ -269,7 +307,9 @@ function activate(ctx) {
       }
     }
 
-    const payload = { subagents: bySession, totalActive };
+    refreshWeather(false);
+
+    const payload = { subagents: bySession, totalActive, weather: cachedWeather };
     const json = JSON.stringify(payload);
     if (json !== lastJson) {
       lastJson = json;
@@ -279,6 +319,7 @@ function activate(ctx) {
 
   const timer = setInterval(scan, SCAN_INTERVAL_MS);
   timer.unref?.();
+  refreshWeather(true);
   setTimeout(scan, 300);
 
   return {
@@ -286,7 +327,10 @@ function activate(ctx) {
       scan();
     },
     handle(msg) {
-      if (msg.action === 'refresh') scan();
+      if (msg.action === 'refresh') {
+        refreshWeather(false);
+        scan();
+      }
     },
   };
 }
