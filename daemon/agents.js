@@ -33,12 +33,15 @@ function buildEnv(port, sessionId, agent) {
 function writeClaudeSettings() {
   const H = { type: 'command', command: `node "${HOOK}" claude` };
   const plain = () => [{ hooks: [H] }];
+  // Nach jedem Tool-Aufruf, aber im Hintergrund: Claude wartet nicht auf den Hook
+  const background = () => [{ hooks: [{ ...H, async: true }] }];
   const settings = {
     hooks: {
       SessionStart: plain(),
       UserPromptSubmit: plain(),
       PreToolUse: plain(),
-      PostToolUse: [{ matcher: 'AskUserQuestion', hooks: [H] }],
+      PostToolUse: background(),
+      PostToolUseFailure: background(),
       PermissionRequest: plain(),
       Notification: plain(),
       Stop: plain(),

@@ -61,6 +61,8 @@ function bufferText(term, lines) {
 
 // Spinner- und Statuszeichen am Anfang des Terminaltitels (Claude: "✳ Name", "◐ Name"; Codex: "[ ! ] …")
 const TITLE_PREFIX = /^(?:[\s*·•…⏺✳✻✽◐◑◒◓◜◝◞◟⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]|\[\s*!\s*\])+/u;
+// Claude dreht diesen Spinner im Titel, solange es arbeitet. Bei offenem Freigabe-Dialog steht dort ✳.
+const CLAUDE_BUSY_TITLE = /^\s*[◐◑◒◓]/u;
 // Titel, die keinen Sessionnamen tragen, sondern nur das Programm oder einen Hinweis nennen
 const TITLE_GENERIC = [/^claude( code)?$/i, /^codex$/i, /^agy(\.exe)?$/i, /^antigravity$/i, /^pi$/i, /^action required$/i, /^pwsh(\.exe)?$/i, /^powershell$/i];
 
@@ -426,7 +428,13 @@ class Session {
     // Codex signals approval/input overlays only via the terminal title ("Action Required").
     if (this.entry.agent === 'codex') {
       if (/Action Required/i.test(last)) this.setStatus('waiting', 'Freigabe/Eingabe im Overlay', 'title');
-      else if (this.entry.statusSource === 'title' && this.entry.status === 'waiting') this.setStatus('running', 'arbeitet', 'title');
+      else if (this.entry.status === 'waiting' && (this.entry.statusSource === 'title' || this.permWait)) this.resumeAfterPermission('title');
+      else this.mgr.persistAndBroadcast();
+    } else if (this.entry.agent === 'claude' && this.permWait && !this.permWait.resumed) {
+      // Freigabe offen: erst ruhender Titel (Dialog steht), dreht der Spinner danach wieder, ist sie erteilt.
+      // Titel und Hook kommen in wechselnder Reihenfolge an, deshalb zählt nur Ruhe -> Spinner.
+      if (!CLAUDE_BUSY_TITLE.test(last)) this.permWait.armed = true;
+      if (this.permWait.armed && CLAUDE_BUSY_TITLE.test(last)) this.resumeAfterPermission('title');
       else this.mgr.persistAndBroadcast();
     } else {
       this.mgr.persistAndBroadcast();
@@ -576,6 +584,7 @@ class Session {
   onExit(e) {
     this.proc = null;
     this.pendingNameWrite = null;
+    this.permWait = null;
     this.stopAgyPoll();
     clearTimeout(this.nameWriteTimer);
     clearTimeout(this.heurTimer);
@@ -609,6 +618,7 @@ class Session {
       case 'UserPromptSubmit': {
         this.entry.unread = false;
         this.lastAnswer = null;
+        this.permWait = null;
         delete this.entry.todo;
         const pText = typeof payload.prompt === 'string' ? payload.prompt.trim().split('\n')[0].slice(0, 80) : '';
         this.setStatus('running', pText ? `💭 ${pText}` : 'arbeitet', 'hook');
@@ -648,8 +658,8 @@ class Session {
           if (step) this.entry.todo = step;
           else if (tool === 'TodoWrite' || tool === 'update_plan') delete this.entry.todo;
         }
-        const detail = [this.entry.todo, step && step !== this.entry.todo ? step : ''].filter(Boolean).join(' · ') || 'arbeitet';
-        this.setStatus('running', detail, 'hook');
+        this.rememberToolUse(payload.tool_use_id, tool, input);
+        this.setStatus('running', this.runningDetail(step), 'hook');
         if (this.entry.agent === 'codex') this.startAgyPoll();
         break;
       }
@@ -710,9 +720,18 @@ class Session {
       case 'Elicitation':
         this.setStatus('waiting', 'Eingabe angefragt (MCP)', 'hook');
         break;
+      // Kommt bei Claude im Hintergrund (async), also womöglich erst nach dem nächsten Hook
       case 'PostToolUse':
-        if (payload.tool_name === 'AskUserQuestion') this.setStatus('running', this.entry.todo || 'arbeitet', 'hook');
+      case 'PostToolUseFailure': {
+        const tool = payload.tool_name || '';
+        if (tool === 'AskUserQuestion') {
+          if (this.entry.status === 'waiting') this.setStatus('running', this.entry.todo || 'arbeitet', 'hook');
+          break;
+        }
+        const pw = this.permWait;
+        if (pw && (pw.toolUseId ? payload.tool_use_id === pw.toolUseId : pw.tool === tool)) this.resumeAfterPermission('hook', true);
         break;
+      }
       case 'PermissionRequest': {
         this.stopAgyPoll();
         const tool = payload.tool_name || '';
@@ -724,6 +743,15 @@ class Session {
           break;
         }
         const t = tool || payload.prompt || '';
+        // Nach der Freigabe kommt kein eigener Hook, erst PostToolUse, wenn das Tool fertig ist.
+        // Für die Laufzeit dazwischen merkt sich die Session, worauf sie wartet (siehe parseTitles).
+        this.permWait = {
+          tool,
+          toolUseId: this.findToolUse(tool, payload.tool_input),
+          detail: this.runningDetail(formatToolDetail(tool, payload.tool_input || {})),
+          armed: !CLAUDE_BUSY_TITLE.test(this.entry.title || ''),
+          resumed: false,
+        };
         this.setStatus('waiting', t ? `Freigabe: ${t}` : 'Freigabe angefragt', 'hook');
         break;
       }
@@ -734,12 +762,15 @@ class Session {
         const type = payload.notification_type || '';
         const msg = payload.message || '';
         if (type === 'idle_prompt' || /waiting for your input/i.test(msg)) break;
+        // Meldung zu einer Freigabe, die inzwischen erteilt ist (kommt ~6 s nach dem Dialog)
+        if (type === 'permission_prompt' && this.permWait?.resumed) break;
         const detail = type === 'permission_prompt' || /permission/i.test(msg) ? 'Freigabe oder Rückfrage offen' : (msg || 'wartet auf dich');
         this.setStatus('waiting', detail, 'hook');
         break;
       }
       case 'Stop': {
         this.stopAgyPoll();
+        this.permWait = null;
         delete this.entry.todo;
         if (Array.isArray(this.entry.piSubagents)) {
           const now = Date.now();
@@ -761,6 +792,34 @@ class Session {
       default:
         break;
     }
+  }
+
+  runningDetail(step) {
+    return [this.entry.todo, step && step !== this.entry.todo ? step : ''].filter(Boolean).join(' · ') || 'arbeitet';
+  }
+
+  // PermissionRequest bringt keine tool_use_id mit - die steht nur im PreToolUse davor
+  rememberToolUse(id, tool, input) {
+    if (!id) return;
+    this.recentToolUses = (this.recentToolUses || []).slice(-15);
+    this.recentToolUses.push({ id, tool, input: JSON.stringify(input ?? {}) });
+  }
+
+  findToolUse(tool, input) {
+    const list = this.recentToolUses || [];
+    const key = JSON.stringify(input ?? {});
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].tool === tool && list[i].input === key) return list[i].id;
+    for (let i = list.length - 1; i >= 0; i--) if (list[i].tool === tool) return list[i].id;
+    return null;
+  }
+
+  // Freigabe erteilt: `finished` = das freigegebene Tool ist schon durch (PostToolUse)
+  resumeAfterPermission(source, finished = false) {
+    const pw = this.permWait;
+    if (finished || !pw) this.permWait = null;
+    if (this.entry.status !== 'waiting') { this.mgr.persistAndBroadcast(); return; }
+    if (this.permWait) this.permWait.resumed = true;
+    this.setStatus('running', this.permWait ? this.permWait.detail : this.entry.todo || 'arbeitet', source);
   }
 
   setStatus(status, detail, source) {
